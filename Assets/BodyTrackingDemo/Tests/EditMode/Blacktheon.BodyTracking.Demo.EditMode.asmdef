@@ -1,0 +1,7 @@
+{
+  "name": "Blacktheon.BodyTracking.Demo.EditMode",
+  "references": ["Blacktheon.BodyTracking.Demo"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": false
+}

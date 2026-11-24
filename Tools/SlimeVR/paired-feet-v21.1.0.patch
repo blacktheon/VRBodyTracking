@@ -1,0 +1,213 @@
+diff --git a/server/core/src/main/java/dev/slimevr/tracking/trackers/Tracker.kt b/server/core/src/main/java/dev/slimevr/tracking/trackers/Tracker.kt
+index 61186d10fc0bffab6a0436f37a8140aa0e73a9d5..935c24fb796c9afe29cbde779f0fb77eb8dda03f 100644
+--- a/server/core/src/main/java/dev/slimevr/tracking/trackers/Tracker.kt
++++ b/server/core/src/main/java/dev/slimevr/tracking/trackers/Tracker.kt
+@@ -20,6 +20,20 @@ import kotlin.time.TimeSource
+ const val TIMEOUT_MS = 2_000L
+ const val DISCONNECT_MS = 3_000L + TIMEOUT_MS
+ 
++/** World Y and its server-side arrival time, captured together on the sensor's input thread. */
++class VerticalAccelerationSample(val ay: Float, val timeMillis: Long) {
++	@Volatile
++	var validForConnection = true
++		internal set
++
++	companion object {
++		private val originNanos = System.nanoTime()
++
++		// Reserve zero for sensors that have never reported acceleration.
++		fun nowMillis(): Long = 1L + (System.nanoTime() - originNanos) / 1_000_000L
++	}
++}
++
+ /**
+  * Generic tracker class for input and output tracker,
+  * with flags on instantiation.
+@@ -120,6 +134,12 @@ class Tracker @JvmOverloads constructor(
+ 	// IMU: +z forward, +x left, +y up
+ 	// SlimeVR: +z backward, +x right, +y up
+ 	private var _acceleration = Vector3.NULL
++	val isPhysicalImu = hasAcceleration && isImu() && (device?.origin == DeviceOrigin.UDP || device?.origin == DeviceOrigin.HID)
++
++	@Volatile
++	var lastVerticalAcceleration: VerticalAccelerationSample? = null
++		private set
++
+ 	private var _velocity = Vector3.NULL
+ 	private var _magVector = Vector3.NULL
+ 
+@@ -165,6 +185,8 @@ class Tracker @JvmOverloads constructor(
+ 	 */
+ 	var status: TrackerStatus by Delegates.observable(TrackerStatus.DISCONNECTED) { _, old, new ->
+ 		if (old == new) return@observable
++		// A reconnect can report rotation before its first new acceleration packet.
++		lastVerticalAcceleration?.validForConnection = false
+ 
+ 		if (allowReset && !old.reset && new.reset && !needReset) {
+ 			needReset = true
+@@ -477,6 +499,9 @@ class Tracker @JvmOverloads constructor(
+ 	 */
+ 	fun setAcceleration(vec: Vector3) {
+ 		this._acceleration = vec
++		if (isPhysicalImu) {
++			lastVerticalAcceleration = VerticalAccelerationSample(getAcceleration().y, VerticalAccelerationSample.nowMillis())
++		}
+ 	}
+ 
+ 	/**
+diff --git a/server/core/src/main/java/dev/slimevr/websocketapi/PairedFeet.kt b/server/core/src/main/java/dev/slimevr/websocketapi/PairedFeet.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..52e7cfbcdb4c82b7984c2685fb256e2ec72c82f9
+--- /dev/null
++++ b/server/core/src/main/java/dev/slimevr/websocketapi/PairedFeet.kt
+@@ -0,0 +1,94 @@
++package dev.slimevr.websocketapi
++
++import com.fasterxml.jackson.databind.JsonNode
++import com.fasterxml.jackson.databind.node.JsonNodeFactory
++import com.fasterxml.jackson.databind.node.ObjectNode
++import dev.slimevr.VRServer
++import dev.slimevr.tracking.trackers.Tracker
++import dev.slimevr.tracking.trackers.TrackerStatus
++import dev.slimevr.tracking.trackers.VerticalAccelerationSample
++import org.java_websocket.WebSocket
++import org.java_websocket.exceptions.WebsocketNotConnectedException
++import java.util.concurrent.ConcurrentHashMap
++
++/** Optional physical-IMU polling on the stock WebSocket; each headset owns one player slot. */
++internal class PairedFeet(private val server: VRServer) {
++	private class Session(var slot: Int = 0, var lastPollMillis: Long = 0)
++
++	private val sessions = ConcurrentHashMap<WebSocket, Session>()
++	private val json = JsonNodeFactory.instance
++
++	// Capture saved labels before tracker input starts. A duplicate on an unplugged board
++	// must still be treated as ambiguous. Live GUI names take over when each sensor appears.
++	private val unseenLabels = server.configManager.vrConfig.getTrackers()
++		.filterKeys { it.startsWith("udp:") || HID_TRACKER_ID.matches(it) }
++		.mapValues { it.value.customName }
++		.toMutableMap()
++
++	fun isClient(conn: WebSocket): Boolean = sessions.containsKey(conn)
++
++	fun release(conn: WebSocket) {
++		sessions.remove(conn)
++	}
++
++	fun request(conn: WebSocket, slotNode: JsonNode?) {
++		val session = sessions.computeIfAbsent(conn) { Session() }
++		if (!conn.isOpen) {
++			sessions.remove(conn, session)
++			return
++		}
++		val slot = slotNode?.takeIf { it.isIntegralNumber && it.canConvertToInt() }?.intValue() ?: 0
++		// Tracker registration and slot decisions run on the same VRServer thread.
++		server.queueTask {
++			if (!conn.isOpen || sessions[conn] !== session) return@queueTask
++			val now = VerticalAccelerationSample.nowMillis()
++			val error = when {
++				slot !in 1..3 -> "invalid_slot"
++				session.slot != 0 && session.slot != slot -> "slot_locked"
++				sessions.values.any { it !== session && it.slot == slot && now - it.lastPollMillis < LEASE_MS } -> "slot_in_use"
++				else -> ""
++			}
++			val response = json.objectNode().put("type", TYPE).put("slot", slot).put("error", error)
++			if (error.isEmpty()) {
++				session.slot = slot
++				session.lastPollMillis = now
++				val trackers = server.allTrackers
++				if (unseenLabels.isNotEmpty()) trackers.forEach { unseenLabels.remove(it.name) }
++				response.set<ObjectNode>("left", reading(trackers, "P$slot-L"))
++				response.set<ObjectNode>("right", reading(trackers, "P$slot-R"))
++			} else {
++				response.set<ObjectNode>("left", foot("", false, 0f, 0))
++				response.set<ObjectNode>("right", foot("", false, 0f, 0))
++			}
++			try {
++				conn.send(response.toString())
++			} catch (_: WebsocketNotConnectedException) {
++				// The socket can close between the isOpen check and the asynchronous send.
++			}
++		}
++	}
++
++	private fun reading(trackers: List<Tracker>, label: String): ObjectNode {
++		val sensor = trackers.singleOrNull { it.isPhysicalImu && it.customName == label }
++		if (sensor == null || label in unseenLabels.values) return foot("", false, 0f, 0)
++		val sample = sensor.lastVerticalAcceleration ?: return foot(sensor.name, false, 0f, 0)
++		val valid = sensor.status == TrackerStatus.OK &&
++			sample.validForConnection &&
++			sample.ay.isFinite() &&
++			VerticalAccelerationSample.nowMillis() - sample.timeMillis <= STALE_MS
++		return foot(sensor.name, valid, if (valid) sample.ay else 0f, sample.timeMillis)
++	}
++
++	private fun foot(id: String, valid: Boolean, ay: Float, t: Long): ObjectNode = json.objectNode()
++		.put("id", id)
++		.put("valid", valid)
++		.put("ay", ay)
++		.put("t", t)
++
++	companion object {
++		const val TYPE = "blacktheon.feet.v1"
++		private const val STALE_MS = 250L
++		private const val LEASE_MS = 3_000L
++		private val HID_TRACKER_ID = Regex("[0-9A-Fa-f]{12}/[0-9]+")
++	}
++}
+diff --git a/server/core/src/main/java/dev/slimevr/websocketapi/WebSocketVRBridge.kt b/server/core/src/main/java/dev/slimevr/websocketapi/WebSocketVRBridge.kt
+index 6e71f82812df49402f2eb3c410eb205b1899d7c3..47d684f7c9306635469e1a3923d2a47b95ed0b7b 100644
+--- a/server/core/src/main/java/dev/slimevr/websocketapi/WebSocketVRBridge.kt
++++ b/server/core/src/main/java/dev/slimevr/websocketapi/WebSocketVRBridge.kt
+@@ -16,6 +16,7 @@ import io.github.axisangles.ktmath.Quaternion
+ import io.github.axisangles.ktmath.Vector3
+ import org.java_websocket.WebSocket
+ import org.java_websocket.handshake.ClientHandshake
++import java.nio.ByteBuffer
+ import java.util.*
+ import java.util.concurrent.atomic.AtomicBoolean
+ 
+@@ -28,6 +29,7 @@ class WebSocketVRBridge(
+ 	private val internalTrackers: MutableList<Tracker> = FastList(computedTrackers.size)
+ 	private val newHMDData = AtomicBoolean(false)
+ 	private val mapper = ObjectMapper()
++	private val pairedFeet = PairedFeet(server)
+ 	private val internalHMDTracker = Tracker(
+ 		null,
+ 		0,
+@@ -117,19 +119,33 @@ class WebSocketVRBridge(
+ 		}
+ 	}
+ 
++	override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
++		pairedFeet.release(conn)
++		super.onClose(conn, code, reason, remote)
++	}
++
++	override fun onMessage(conn: WebSocket, message: ByteBuffer) {
++		if (!pairedFeet.isClient(conn)) super.onMessage(conn, message)
++	}
++
+ 	override fun onMessage(conn: WebSocket, message: String) {
+ 		// LogManager.info(message);
+ 		try {
+ 			val json = mapper.readTree(message) as ObjectNode
+ 			if (json.has("type")) {
+ 				when (json["type"].asText()) {
++					PairedFeet.TYPE -> {
++						pairedFeet.request(conn, json["slot"])
++						return
++					}
++
+ 					"pos" -> {
+-						parsePosition(json, conn)
++						if (!pairedFeet.isClient(conn)) parsePosition(json, conn)
+ 						return
+ 					}
+ 
+ 					"action" -> {
+-						parseAction(json, conn)
++						if (!pairedFeet.isClient(conn)) parseAction(json, conn)
+ 						return
+ 					}
+ 

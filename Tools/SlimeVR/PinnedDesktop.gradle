@@ -1,0 +1,16 @@
+// Exact versions selected by upstream v21.1.0 for the desktop runtime used in this release.
+// In particular, hid4java also requests an open-ended JNA version range transitively.
+allprojects {
+    configurations.configureEach {
+        resolutionStrategy.force(
+            'org.java-websocket:Java-WebSocket:1.6.0',
+            'com.melloware:jintellitype:1.5.6',
+            'net.java.dev.jna:jna:5.19.1',
+            'net.java.dev.jna:jna-platform:5.19.1'
+        )
+    }
+    tasks.withType(AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+}
