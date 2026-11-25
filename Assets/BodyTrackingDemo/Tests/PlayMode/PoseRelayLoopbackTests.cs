@@ -44,6 +44,14 @@ namespace Blacktheon.BodyTracking.Demo.Tests
             AssertPeer(1, 2, second.LocalClientId, 0.32f);
             AssertPeer(2, 3, third.LocalClientId, 0.43f);
 
+            samples[1] = PlayerPose(1, true, 0.18f, 0);
+            yield return Until(() => relays.TrueForAll(endpoint =>
+                endpoint.Roster.TryGet(1, out _, out AvatarPose pose) &&
+                Mathf.Abs(pose.Head.position.y - SeatedMotion.SittingEyeHeight) < 0.001f &&
+                TabletPanel.Lift(pose, true) == "18 cm" && TabletPanel.Lift(pose, false) == "0 cm"),
+                "tablet and all headsets see the new seated pose and only the raised left shoe");
+            AssertPeer(1, 2, second.LocalClientId, 0.32f);
+
             ulong oldId = second.LocalClientId;
             second.Shutdown();
             yield return Until(() => !relays[1].Roster.TryGet(2, out _, out _), "other headsets remove a disconnected seat");
@@ -54,14 +62,23 @@ namespace Blacktheon.BodyTracking.Demo.Tests
             AssertPeer(3, 2, returning.LocalClientId, 0.12f);
         }
 
+        static AvatarPose PlayerPose(byte slot, bool sitting, float leftLift, float rightLift)
+        {
+            var floor = new Vector3(slot, 0, 0);
+            var heading = Quaternion.Euler(0, 15, 0);
+            return new AvatarPose
+            {
+                Slot = slot, FreshFeet = 3,
+                Head = new Pose(floor + Vector3.up * (sitting ? SeatedMotion.SittingEyeHeight : SeatedMotion.StandingEyeHeight), heading),
+                LeftHand = Pose.identity, RightHand = Pose.identity,
+                LeftFoot = SeatedMotion.Foot(floor, heading, true, leftLift, sitting),
+                RightFoot = SeatedMotion.Foot(floor, heading, false, rightLift, sitting)
+            };
+        }
+
         NetworkManager Join(byte slot, float lift)
         {
-            var sample = new AvatarPose
-            {
-                Slot = slot, FreshFeet = 3, Head = new Pose(new Vector3(slot, 1.2f, 0), Quaternion.identity),
-                LeftHand = Pose.identity, RightHand = Pose.identity, LeftFoot = Pose.identity,
-                RightFoot = new Pose(new Vector3(slot, lift, 0), Quaternion.Euler(0, 15, 0))
-            };
+            var sample = PlayerPose(slot, false, 0, lift);
             NetworkManager manager = CreateEndpoint(sample);
             manager.NetworkConfig.ConnectionData = new ConnectionPayload
             {
@@ -104,8 +121,9 @@ namespace Blacktheon.BodyTracking.Demo.Tests
         {
             Assert.That(relays[endpoint].Roster.TryGet(slot, out ulong owner, out AvatarPose pose), Is.True);
             Assert.That(owner, Is.EqualTo(id));
-            Assert.That(pose.RightFoot.position.y, Is.EqualTo(lift).Within(0.001f));
-            Assert.That(pose.LeftFoot.position.y, Is.Zero);
+            Assert.That(pose.Head.position.y, Is.EqualTo(SeatedMotion.StandingEyeHeight).Within(0.001f));
+            Assert.That(pose.RightFoot.position.y, Is.EqualTo(SeatedMotion.ShoeCenterHeight + lift).Within(0.001f));
+            Assert.That(pose.LeftFoot.position.y, Is.EqualTo(SeatedMotion.ShoeCenterHeight).Within(0.001f));
             Assert.That(pose.FreshFeet, Is.EqualTo(3));
         }
 

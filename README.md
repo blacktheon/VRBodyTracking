@@ -20,6 +20,8 @@ Use six SlimeVR trackers on **one Quest 3** to see your knees and feet in a virt
 | Each Quest 3 | [Quest APK][quest] | Displays the solo mirror or joins a multiplayer seat. |
 | Android tablet, for multiplayer | [Tablet APK][tablet] | Hosts the shared room and shows all three avatars. |
 
+The standing and sitting controls below are in the [development build](#build-from-source). The linked **v0.1.0** APKs use **A** for calibration and show a seated multiplayer avatar.
+
 Extract the entire Windows ZIP. When switching launchers, close the running SlimeVR GUI and server first. Connect the PC, trackers and headsets to the same LAN. Include the tablet for multiplayer. On Windows, run `ipconfig` and find the **IPv4 Address** of the Wi-Fi or Ethernet adapter on that network. This is the **Tracking PC** address the Quest asks for.
 
 <details>
@@ -41,7 +43,7 @@ On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet,
 
 1. Run **`Start-Stock-Solo.cmd`** on the PC. Pair the sensors in SlimeVR and assign them to the **chest, hip, left and right thighs, and left and right lower legs**. [SlimeVR mounting guide][mounting]
 2. Open the Quest app. Select **Six trackers / solo**, enter the PC's IPv4 address under **Tracking PC**, then choose **Start solo test**. The Quest now supplies the head pose to SlimeVR.
-3. Complete the body measurements and mounting calibration in SlimeVR. Face forward and press **A** in the room for a yaw reset. Raise one knee and watch the knee and foot on that side move in the mirror.
+3. Complete the body measurements and mounting calibration in SlimeVR. With your shoes on the floor, face forward and press **X** in the room to reset yaw and set the first-person foot reference. Raise one knee and watch the knee and foot on that side move in the mirror. **A** switches your first-person avatar between standing and sitting. The mirror shows the six-tracker solve.
 
 <img src="docs/images/solo-mirror.png" alt="Unity view of the solo mirror showing the solved head, torso, knees and feet" width="640">
 
@@ -58,8 +60,8 @@ On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet,
    | **Paired feet / seat 3** | `P3-L` | `P3-R` |
 
 2. Open the tablet app. Its game server starts automatically and displays its LAN address. On each Quest, select a different seat and enter the same **Tracking PC** address. Leave **Tablet** on **Find on Wi-Fi** or enter the tablet's displayed address. Choose **Enter multiplayer room**.
-3. Sit facing forward with both shoes flat. Press **A** and hold still until the headset says **Tracking both feet**. Have seat 2 lift only its left foot, hold it, then lower it. Watch **Seat 2 → L** on the tablet and the same foot on the other players' avatars.
-4. Walk with the left stick and turn with the right. The feet travel with the virtual chair. Each shoe controls its own vertical lift, so the physical chairs can face different directions.
+3. Sit facing forward with both shoes flat. Press **X** on the left controller and hold still until the headset says **Tracking both feet**. Have seat 2 lift only its left foot, hold it, then lower it. Watch **Seat 2 → L** on the tablet and the same foot on the other players' avatars.
+4. Your avatar starts standing while you sit in your physical chair. Press **A** on the right controller to sit in the game, and press it again to stand. The other players and the tablet see your pose. The left stick moves you and the right stick turns you. Both shoes stay at floor height during joystick travel until you physically lift one.
 
 <img src="docs/images/headset-setup.png" alt="Quest setup menu with paired feet for seat 2, a tracking PC address field, tablet discovery and the Enter multiplayer room action" width="560">
 
@@ -69,7 +71,8 @@ On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet,
 | --- | --- | --- |
 | Left stick | Select a row or keypad key | Walk |
 | Right stick | — | Turn |
-| **A** | Change the mode, press a key or activate the selected row | Reset yaw in solo mode or calibrate the shoes in paired mode |
+| **A** (right controller) | Change the mode, press a key or activate the selected row | Toggle standing or sitting |
+| **X** (left controller) | — | Reset yaw and foot reference in solo mode or calibrate the shoes in paired mode |
 | **B** | Back out of the keypad or close settings | Open settings |
 
 <details>
@@ -166,7 +169,7 @@ To rebuild the Windows companion, install Git and Node.js 22 or newer, then run 
 | The tablet room is missing | Open the tablet app, enter its displayed IP on the Quest, and check that the Wi-Fi or hotspot permits traffic between clients on UDP 7777. |
 | A seat is occupied or a shoe is unavailable | Give each headset its own seat. Check that each sensor is online and its custom name appears exactly once, including saved sensors currently unplugged. |
 | A level shoe loses tracking when held still | Paired mode needs continuous linear acceleration. On SlimeVR ESP firmware v0.7.4, check `SEND_ACCELERATION=true` and `OPTIMIZE_UPDATES=false` in the firmware build for your board. [Firmware settings][firmware] |
-| A foot stays raised after landing | Put both shoes flat and press **A**. A still shoe produces the same acceleration at any height. The app estimates lift from the preceding movement, so a missed impulse can leave the estimate high. |
+| A foot stays raised after landing | Put both shoes flat and press **X** (**A** in v0.1.0). A still shoe produces the same acceleration at any height. The app estimates lift from the preceding movement, so a missed impulse can leave the estimate high. |
 
 **Test coverage for v0.1.0.** Six simulated tracker devices drove the Windows servers. Three Unity clients exchanged independent foot lifts through a physical Galaxy Tab S9+, including a disconnect and rejoin. A clean Unity project installed the tagged Git package and passed its 24 package tests. Physical Quest 3 and shoe-mounted tracker validation is still pending.
 

@@ -259,7 +259,7 @@ namespace Blacktheon.BodyTracking.Demo
                 lines[1].text = "Tracking PC      " + (draft.Pc.Length == 0 ? "Enter LAN address" : draft.Pc);
                 lines[2].text = "Tablet      " + (draft.Tablet.Length == 0 ? "Find on Wi-Fi" : draft.Tablet);
                 lines[3].text = draft.Solo ? "Start solo test" : "Enter multiplayer room";
-                hint.text = "Left stick selects. A changes or opens. B closes.\nIn the room, A calibrates and B opens settings.";
+                hint.text = "Left stick selects. A selects or opens. B closes.\nIn the room, A sits or stands. X calibrates.";
             }
         }
     }

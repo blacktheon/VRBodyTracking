@@ -74,6 +74,13 @@ foreach ($variant in $variants) {
             New-TabletProject $stage
         } else {
             foreach ($dir in 'Assets', 'Packages', 'ProjectSettings') { Copy-FromProject $dir $stage }
+            # The editor Assistant starts its network relay even in batch mode.
+            $packagesPath = Join-Path $stage 'Packages/manifest.json'
+            $packages = Get-Content -Raw -LiteralPath $packagesPath | ConvertFrom-Json
+            if ($packages.dependencies.PSObject.Properties['com.unity.ai.assistant']) {
+                $packages.dependencies.PSObject.Properties.Remove('com.unity.ai.assistant')
+                [IO.File]::WriteAllText($packagesPath, ($packages | ConvertTo-Json -Depth 100))
+            }
             $manifestPath = Join-Path $stage 'Assets/Plugins/Android/AndroidManifest.xml'
             [xml]$androidManifest = Get-Content -Raw -LiteralPath $manifestPath
             $null = $androidManifest.manifest.application.SetAttribute('usesCleartextTraffic', 'http://schemas.android.com/apk/res/android', 'true')

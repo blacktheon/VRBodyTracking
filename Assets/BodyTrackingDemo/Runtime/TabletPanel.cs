@@ -105,7 +105,7 @@ namespace Blacktheon.BodyTracking.Demo
         internal static string Lift(AvatarPose pose, bool left)
         {
             if ((pose.FreshFeet & (left ? 1 : 2)) == 0) return "no data";
-            float height = (left ? pose.LeftFoot : pose.RightFoot).position.y - 0.055f;
+            float height = (left ? pose.LeftFoot : pose.RightFoot).position.y - SeatedMotion.ShoeCenterHeight;
             return Mathf.Max(0, Mathf.RoundToInt(height * 100)) + " cm";
         }
     }

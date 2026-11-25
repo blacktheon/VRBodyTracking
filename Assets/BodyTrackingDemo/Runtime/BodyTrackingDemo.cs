@@ -25,7 +25,8 @@ namespace Blacktheon.BodyTracking.Demo
         DemoChoices choices;
         Quaternion body = Quaternion.identity;
         Vector3 chairInRig;
-        bool needsSeat = true, configured;
+        float neutralEyeInRig;
+        bool needsSeat = true, configured, sitting;
         double nextStatus, calibrationNoticeUntil;
         string network = "Waiting for tablet";
 
@@ -91,6 +92,7 @@ namespace Blacktheon.BodyTracking.Demo
             choices = next;
             configured = true;
             choices.Save();
+            skeleton?.ResetFootReference();
             tracking.Disconnect();
             if (!string.IsNullOrEmpty(choices.Pc))
                 tracking.Connect(choices.Pc, choices.Slot, choices.Solo ? BodyTrackingMode.SixTrackers : BodyTrackingMode.PairedFeet, origin, head);
@@ -114,6 +116,8 @@ namespace Blacktheon.BodyTracking.Demo
             if (needsSeat && head.position.y - origin.position.y > 0.25f)
             {
                 body = SeatedMotion.Place(rig, head, choices.Slot);
+                neutralEyeInRig = head.position.y - rig.position.y;
+                SetEyeHeight();
                 RememberChair();
                 needsSeat = false;
                 if (panel.Open) panel.OpenSettings(choices, head);
@@ -123,9 +127,15 @@ namespace Blacktheon.BodyTracking.Demo
             if (controls.Back) { panel.OpenSettings(choices, head); return; }
             if (controls.Confirm)
             {
+                sitting = !sitting;
+                if (!needsSeat) SetEyeHeight();
+            }
+            if (controls.Calibrate)
+            {
                 Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
                 if (forward.sqrMagnitude > 0.01f) body = Quaternion.LookRotation(forward.normalized);
                 RememberChair();
+                skeleton?.ResetFootReference();
                 tracking.Calibrate();
                 calibrationNoticeUntil = Time.unscaledTimeAsDouble + 2;
             }
@@ -138,6 +148,14 @@ namespace Blacktheon.BodyTracking.Demo
             chairInRig = rig.InverseTransformPoint(new Vector3(head.position.x, 0, head.position.z));
         }
 
+        void SetEyeHeight()
+        {
+            // Offset the entire tracked rig once. Physical head and hand movement remains one-to-one.
+            Vector3 position = rig.position;
+            position.y = (sitting ? SeatedMotion.SittingEyeHeight : SeatedMotion.StandingEyeHeight) - neutralEyeInRig;
+            rig.position = position;
+        }
+
         void LateUpdate()
         {
             double now = Time.unscaledTimeAsDouble;
@@ -148,16 +166,13 @@ namespace Blacktheon.BodyTracking.Demo
                 if (choices.Solo)
                 {
                     skeleton ??= new SolvedSkeleton(room);
-                    skeleton.Draw(tracking, head, body);
+                    skeleton.Draw(tracking, head, body, origin.position.y);
                 }
-                else
-                {
-                    var pose = SeatedPose();
-                    int index = choices.Slot - 1;
-                    local[index] ??= new SeatAvatar(room, choices.Slot, true);
-                    local[index].Draw(pose);
-                    if (!needsSeat) upload = pose;
-                }
+                var pose = PlayerPose();
+                int index = choices.Slot - 1;
+                local[index] ??= new SeatAvatar(room, choices.Slot, true);
+                local[index].Draw(pose);
+                if (!needsSeat && !choices.Solo) upload = pose;
             }
             relay.Tick(upload, now);
             for (int i = 0; i < remote.Length; i++)
@@ -176,10 +191,13 @@ namespace Blacktheon.BodyTracking.Demo
             else if (head != null) UpdateHeadsetStatus(upload, now);
         }
 
-        AvatarPose SeatedPose()
+        bool TryGetLift(bool left, out float lift) => choices.Solo
+            ? skeleton.TryGetFootLift(left, out lift) : tracking.TryGetFootLift(left, out lift);
+
+        AvatarPose PlayerPose()
         {
-            bool hasLeft = tracking.TryGetFootLift(true, out float left);
-            bool hasRight = tracking.TryGetFootLift(false, out float right);
+            bool hasLeft = TryGetLift(true, out float left);
+            bool hasRight = TryGetLift(false, out float right);
             // Joystick locomotion moves the rig. Leaning or looking down only moves the head inside it.
             Vector3 floor = rig.TransformPoint(chairInRig);
             floor.y = 0;
@@ -188,8 +206,8 @@ namespace Blacktheon.BodyTracking.Demo
                 Slot = (byte)choices.Slot, FreshFeet = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0)),
                 Head = new Pose(head.position, head.rotation),
                 LeftHand = Hand(leftHand, true), RightHand = Hand(rightHand, false),
-                LeftFoot = SeatedMotion.Foot(floor, body, true, hasLeft ? left : 0),
-                RightFoot = SeatedMotion.Foot(floor, body, false, hasRight ? right : 0)
+                LeftFoot = SeatedMotion.Foot(floor, body, true, hasLeft ? left : 0, sitting),
+                RightFoot = SeatedMotion.Foot(floor, body, false, hasRight ? right : 0, sitting)
             };
         }
 
@@ -213,7 +231,8 @@ namespace Blacktheon.BodyTracking.Demo
                 roomStatus = occupied ? "Seat occupied. Select another seat." :
                     session.IsClientConnected ? "Tablet online  " + relay.Roster.Count + "/3 seats" : network;
             }
-            panel.Status(choices.Label + "     B  Settings     A  Calibrate\n" + motion + "\n" + pc + (choices.Solo ? "" : "\n" + roomStatus));
+            panel.Status(choices.Label + (sitting ? "    Sitting" : "    Standing") +
+                "\nA  Sit/stand    X  Calibrate    B  Settings\n" + motion + "\n" + pc + (choices.Solo ? "" : "\n" + roomStatus));
         }
 
         void OnDestroy()

@@ -145,7 +145,7 @@ namespace Blacktheon.BodyTracking.Demo
                 hands[i].SetPositionAndRotation(hand.position, hand.rotation);
                 feet[i].SetPositionAndRotation(foot.position, foot.rotation);
                 Vector3 hip = chest + body * new Vector3(0.11f * side, -0.27f, -0.05f);
-                Vector3 knee = foot.position + up * Mathf.Clamp(hip.y - foot.position.y - 0.06f, 0.13f, 0.41f);
+                Vector3 knee = SeatedMotion.Knee(hip, foot.position, body);
                 DemoRoom.Link(thighs[i], hip, knee, 0.092f);
                 DemoRoom.Link(shins[i], knee, foot.position, 0.075f);
                 if (!own) DemoRoom.Link(arms[i], chest + body * new Vector3(side * 0.16f, 0.12f, 0), hand.position, 0.060f);

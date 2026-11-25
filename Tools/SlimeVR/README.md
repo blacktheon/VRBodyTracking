@@ -14,7 +14,9 @@ The build checks out upstream v21.1.0 at `c11dc54ed1a745ffc4b15db7f820d8d0c19939
 
 The distributable is `Builds/SlimeVR/VRBodyTracking-Windows-x64.zip`. The extracted copy is in `Builds/SlimeVR/Paired`. Use `Start-Stock-Solo.cmd` for the original solver or `Start-Paired.cmd` for the paired protocol. The ZIP includes the upstream license, trademark, Electron, Chromium and JRE notices. [Upstream MIT license](upstream-notices/LICENSE-MIT) · [Upstream Apache license](upstream-notices/LICENSE-APACHE) · [Trademark notice](upstream-notices/TRADEMARK.md)
 
-For a JAR-only build run `Build-Server.ps1` with `-Paired` for the extension, or without a switch for stock. The scripts accept `-OutputDirectory` and `-JavaHome`. Run the following commands from the repository root to verify both JARs and their GUI launchers. The launcher test uses disposable copies and separate Windows application data directories.
+For a JAR-only build run `Build-Server.ps1` with `-Paired` for the extension, or without a switch for stock. The scripts accept `-OutputDirectory` and `-JavaHome`. Run the following commands from the repository root to verify both JARs and their GUI launchers.
+
+Windows Firewall remembers Java by its full path. Keep the same build output folder between runs. The tests reuse a byte-for-byte matching bundled JRE from the installed copy or a versioned build cache. Both GUI launchers use that JRE with disposable test profiles. For headset sessions, keep the extracted server in one folder as well. [Windows Firewall application rules](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/rules#applications-rules)
 
 ```powershell
 node Tools/SlimeVR/Test-Server.mjs --stock Builds/SlimeVR/Paired/Stock/slimevr.jar Builds/SlimeVR/Paired/jre/bin/java.exe

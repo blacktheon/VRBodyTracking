@@ -262,6 +262,11 @@ async function runFixture(reassigned, exercise) {
   const clients = [];
   let ticker, passed = false;
   try {
+    await Promise.all(boards.map(board => {
+      const ready = once(board.socket, 'listening');
+      board.socket.bind(0, '127.0.0.1');
+      return ready;
+    }));
     await until(() => /Web Socket VR Bridge started on port 21110/i.test(log), 'Server failed to start', 12000);
     for (const board of boards.toReversed()) handshake(board, port);
     await until(() => (log.match(/Tracker \d+ connected from/g) ?? []).length >= 6, 'Six tracker boards did not connect');
@@ -293,7 +298,7 @@ await access(jar);
 await access(java);
 // The upstream WebSocket port is fixed. Only send to a server started by this test.
 const guard = net.createServer();
-guard.listen({ port: 21110, host: '0.0.0.0', exclusive: true });
+guard.listen({ port: 21110, host: '127.0.0.1', exclusive: true });
 await once(guard, 'listening');
 await new Promise(resolve => guard.close(resolve));
 if (stockOnly) {

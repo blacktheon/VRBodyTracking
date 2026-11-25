@@ -13,8 +13,9 @@ namespace Blacktheon.BodyTracking.Demo
         internal float Turn { get; private set; }
         internal Vector2Int Navigate { get; private set; }
         internal bool Confirm { get; private set; }
+        internal bool Calibrate { get; private set; }
         internal bool Back { get; private set; }
-        bool wasConfirm, wasBack, holdingStick;
+        bool wasConfirm, wasCalibrate, wasBack, holdingStick;
 
         internal void Read()
         {
@@ -26,6 +27,8 @@ namespace Blacktheon.BodyTracking.Demo
                 turn = XRController.rightHand?.TryGetChildControl<Vector2Control>("thumbstick")?.ReadValue() ?? Vector2.zero;
             if (!right.TryGetFeatureValue(Usages.primaryButton, out bool confirm))
                 confirm = XRController.rightHand?.TryGetChildControl<ButtonControl>("primaryButton")?.isPressed ?? false;
+            if (!left.TryGetFeatureValue(Usages.primaryButton, out bool calibrate))
+                calibrate = XRController.leftHand?.TryGetChildControl<ButtonControl>("primaryButton")?.isPressed ?? false;
             if (!right.TryGetFeatureValue(Usages.secondaryButton, out bool back))
                 back = XRController.rightHand?.TryGetChildControl<ButtonControl>("secondaryButton")?.isPressed ?? false;
             var keyboard = Keyboard.current;
@@ -38,13 +41,16 @@ namespace Blacktheon.BodyTracking.Demo
                 if (keyboard.qKey.isPressed) turn.x = -1;
                 if (keyboard.eKey.isPressed) turn.x = 1;
                 confirm |= keyboard.enterKey.isPressed;
+                calibrate |= keyboard.cKey.isPressed;
                 back |= keyboard.escapeKey.isPressed;
             }
             Move = move.magnitude > 0.20f ? move : Vector2.zero;
             Turn = Mathf.Abs(turn.x) > 0.20f ? turn.x : 0;
             Confirm = confirm && !wasConfirm;
+            Calibrate = calibrate && !wasCalibrate;
             Back = back && !wasBack;
             wasConfirm = confirm;
+            wasCalibrate = calibrate;
             wasBack = back;
             Navigate = Vector2Int.zero;
             if (move.magnitude < 0.40f) holdingStick = false;

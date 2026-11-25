@@ -27,19 +27,21 @@ namespace Blacktheon.BodyTracking.Demo.Tests
             if (valid) Assert.That(address, Is.EqualTo(result));
         }
 
-        [Test]
-        public void FeetStayAheadOfTheSeatAndOnlyRiseVertically()
+        [TestCase(false, 0.06f)]
+        [TestCase(true, 0.32f)]
+        public void EachTrackedShoeLiftsVerticallyFromItsPostureAndReturnsToTheFloor(bool sitting, float forward)
         {
             var floor = new Vector3(3, 0, 2);
             var heading = Quaternion.Euler(0, 90, 0);
-            Pose left = SeatedMotion.Foot(floor, heading, true, 0);
-            Pose lifted = SeatedMotion.Foot(floor, heading, true, 0.23f);
-            Pose right = SeatedMotion.Foot(floor, heading, false, -0.1f);
-            Assert.That(left.position.x, Is.GreaterThan(3.15f));
+            Pose left = SeatedMotion.Foot(floor, heading, true, 0, sitting);
+            Pose lifted = SeatedMotion.Foot(floor, heading, true, 0.23f, sitting);
+            Pose right = SeatedMotion.Foot(floor, heading, false, -0.1f, sitting);
+            Assert.That(left.position.x, Is.EqualTo(3 + forward).Within(0.001f));
             Assert.That(left.position.z, Is.GreaterThan(2.05f));
             Assert.That(right.position.z, Is.LessThan(1.95f));
             Assert.That(right.position.y, Is.EqualTo(left.position.y).Within(0.001f));
             Assert.That(lifted.position - left.position, Is.EqualTo(new Vector3(0, 0.23f, 0)).Using(Vector3EqualityComparer.Instance));
+            Assert.That(SeatedMotion.Foot(floor, heading, true, float.NaN, sitting).position, Is.EqualTo(left.position));
         }
 
         [Test]

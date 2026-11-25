@@ -8,6 +8,10 @@ namespace Blacktheon.BodyTracking.Demo
 {
     internal static class SeatedMotion
     {
+        internal const float StandingEyeHeight = 1.65f;
+        internal const float SittingEyeHeight = 1.20f;
+        internal const float ShoeCenterHeight = 0.055f;
+
         // The three virtual chairs face one another. Physical tracking-space origins can differ.
         internal static Quaternion Place(Transform rig, Transform head, int slot)
         {
@@ -33,10 +37,21 @@ namespace Blacktheon.BodyTracking.Demo
             rig.position += delta;
         }
 
-        internal static Pose Foot(Vector3 floorUnderHead, Quaternion heading, bool left, float lift)
+        internal static Pose Foot(Vector3 floorUnderHead, Quaternion heading, bool left, float lift, bool sitting)
         {
             lift = float.IsFinite(lift) ? Mathf.Clamp(lift, 0, 0.65f) : 0;
-            return new Pose(floorUnderHead + heading * new Vector3(left ? -0.16f : 0.16f, 0.055f + lift, 0.32f), heading);
+            Vector3 rest = heading * new Vector3(left ? -0.16f : 0.16f, 0, sitting ? 0.32f : 0.06f);
+            return new Pose(floorUnderHead + rest + Vector3.up * (ShoeCenterHeight + lift), heading);
+        }
+
+        internal static Vector3 Knee(Vector3 hip, Vector3 ankle, Quaternion heading)
+        {
+            // Two equal leg segments meet in the forward-facing knee plane.
+            const float segmentLength = 0.50f;
+            Vector3 span = ankle - hip;
+            Vector3 forward = Vector3.ProjectOnPlane(heading * Vector3.forward, span).normalized;
+            float bend = Mathf.Sqrt(Mathf.Max(0f, segmentLength * segmentLength - 0.25f * span.sqrMagnitude));
+            return (hip + ankle) * 0.5f + forward * bend;
         }
     }
 }

@@ -38,6 +38,36 @@ function Get-ChildPath([string]$Directory, [string]$Name) {
     return $child
 }
 
+function Test-MatchingRuntime([string]$Bundled, [string]$Candidate) {
+    if (-not [IO.Directory]::Exists($Candidate)) { return $false }
+    $files = [IO.Directory]::GetFiles($Bundled, '*', [IO.SearchOption]::AllDirectories)
+    if ([IO.Directory]::GetFiles($Candidate, '*', [IO.SearchOption]::AllDirectories).Length -ne $files.Length) { return $false }
+    foreach ($file in $files) {
+        $other = Join-Path $Candidate $file.Substring($Bundled.Length + 1)
+        if (-not [IO.File]::Exists($other) -or (Get-FileHash -LiteralPath $file).Hash -ne (Get-FileHash -LiteralPath $other).Hash) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Get-ValidationRuntime([string]$Bundled, [string]$Installed, [string]$Cache, [string]$Scratch) {
+    # Windows Firewall remembers the executable's full path. Run the exact packaged
+    # JRE from a stable location while the release itself is still being staged.
+    foreach ($candidate in $Cache, $Installed) {
+        if (Test-MatchingRuntime $Bundled $candidate) { return $candidate }
+    }
+    if (Test-Path -LiteralPath $Cache) { throw "The cached JRE at $Cache differs from the verified runtime archive." }
+    Copy-Item -LiteralPath $Bundled -Destination $Scratch -Recurse
+    try {
+        [IO.Directory]::Move($Scratch, $Cache)
+    } catch [IO.IOException] {
+        # Another build may have published the same cache during the copy.
+        if (-not (Test-MatchingRuntime $Bundled $Cache)) { throw }
+    }
+    return $Cache
+}
+
 function Write-ReleaseZip([string]$Directory, [string]$ZipPath) {
     $files = [IO.Directory]::GetFiles($Directory, '*', [IO.SearchOption]::AllDirectories)
     [Array]::Sort($files, [StringComparer]::Ordinal)
@@ -98,16 +128,19 @@ try {
         "Runtime archive SHA-256 $runtimeHash"
     )
     [IO.File]::WriteAllLines((Join-Path $portable 'BUILD-INFO.txt'), $buildInfo)
+    $installed = Get-ChildPath $output 'Paired'
+    $cache = Get-ChildPath $output ('test-jre-' + $runtimeHash.Substring(0, 16))
+    $testJre = Get-ValidationRuntime (Join-Path $portable 'jre') (Join-Path $installed 'jre') $cache (Get-ChildPath $staging 'test-jre')
     $test = Join-Path $PSScriptRoot 'Test-Server.mjs'
-    $javaExe = Join-Path $portable 'jre/bin/java.exe'
+    $javaExe = Join-Path $testJre 'bin/java.exe'
+    Write-Output "Testing with $javaExe"
     & node $test --stock $stockJar $javaExe
     if ($LASTEXITCODE -ne 0) { throw 'Stock server integration test failed.' }
     & node $test $pairedJar $javaExe
     if ($LASTEXITCODE -ne 0) { throw 'Paired server integration test failed.' }
-    & node (Join-Path $PSScriptRoot 'Test-Launchers.mjs') $portable
+    & node (Join-Path $PSScriptRoot 'Test-Launchers.mjs') $portable $testJre
     if ($LASTEXITCODE -ne 0) { throw 'Windows GUI launcher test failed.' }
     Write-ReleaseZip $portable $newZip
-    $installed = Get-ChildPath $output 'Paired'
     if ([IO.Directory]::Exists($installed)) {
         Get-ChildItem -LiteralPath $portable -Force | Copy-Item -Destination $installed -Recurse -Force
     } else {

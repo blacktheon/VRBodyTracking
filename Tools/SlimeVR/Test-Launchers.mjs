@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,13 +10,16 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const release = path.resolve(process.argv[2] ?? fileURLToPath(new URL('../../Builds/SlimeVR/Paired', import.meta.url)));
+const releaseRuntime = path.join(release, 'jre');
+const runtime = await realpath(process.argv[3] ?? releaseRuntime);
 const guard = net.createServer();
-guard.listen({ port: 21110, host: '0.0.0.0', exclusive: true });
+guard.listen({ port: 21110, host: '127.0.0.1', exclusive: true });
 await once(guard, 'listening');
 await new Promise(resolve => guard.close(resolve));
 const scratch = await mkdtemp(path.join(os.tmpdir(), 'feet-launcher-'));
 const appDir = path.join(scratch, 'Portable GUI');
 const resources = path.join(appDir, 'resources');
+const appRuntime = path.join(appDir, 'jre');
 
 async function until(test, why, ms = 20000) {
   const deadline = Date.now() + ms;
@@ -35,7 +38,7 @@ async function hasListener() {
 }
 
 async function isolateProfile() {
-  await cp(release, appDir, { recursive: true });
+  await cp(release, appDir, { recursive: true, filter: source => source !== releaseRuntime });
   const upstream = path.join(resources, 'upstream');
   await mkdir(upstream);
   // Keep the official ASAR untouched. A test bootstrap sets appData before loading it.
@@ -118,8 +121,16 @@ async function runLauncher(name, paired) {
 
 try {
   await isolateProfile();
-  await runLauncher('Start-Stock-Solo.cmd', false);
-  await runLauncher('Start-Paired.cmd', true);
+  // Keep the launchers' usual jre location while reusing the verified executable.
+  await symlink(runtime, appRuntime, 'junction');
+  try {
+    assert.equal(await realpath(path.join(appRuntime, 'bin', 'java.exe')),
+      await realpath(path.join(runtime, 'bin', 'java.exe')), 'The GUI must use the bundled Java from its stable path');
+    await runLauncher('Start-Stock-Solo.cmd', false);
+    await runLauncher('Start-Paired.cmd', true);
+  } finally {
+    await unlink(appRuntime);
+  }
   assert.ok(path.dirname(scratch) === os.tmpdir() && path.basename(scratch).startsWith('feet-launcher-'));
   await rm(scratch, { recursive: true, maxRetries: 10, retryDelay: 250 });
 } catch (error) {
