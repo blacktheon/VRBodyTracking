@@ -1,66 +1,183 @@
-# Quest body tracking for Unity
+# VR Body Tracking for Quest 3
 
-Use six SlimeVR trackers with one Quest 3, or give three seated players one tracker per shoe. The headset runs the Unity app locally. The PC receives the trackers, and an Android tablet hosts the multiplayer game.
+[![Release v0.1.0 prerelease](https://img.shields.io/badge/release-v0.1.0%20prerelease-7259A5)][release] ![Unity 6000.3.19f1](https://img.shields.io/badge/Unity-6000.3.19f1-263748?logo=unity&logoColor=white) [![SlimeVR Server v21.1.0](https://img.shields.io/badge/SlimeVR-v21.1.0-167D78)][slimevr]
 
-Download **VRBodyTracking-Windows-x64.zip** and **BodyTracking-Quest.apk**. For multiplayer, also download **BodyTracking-Tablet.apk**. Extract the Windows ZIP before starting either launcher. [Download the v0.1.0 test builds](https://github.com/blacktheon/VRBodyTracking/releases/tag/v0.1.0)
+Use six SlimeVR trackers on **one Quest 3** to see your knees and feet in a virtual mirror. Or give **three seated players** one tracker per shoe and let them see each other lift and lower their feet. The same standalone Quest app runs both modes. Unity developers can also import the tracking package into their own games.
 
-To sideload via USB, enable developer mode and authorize USB debugging on the target device. Run `adb devices` to find its serial. Use `adb -s SERIAL install -r BodyTracking-Quest.apk` for a headset or `adb -s SERIAL install -r BodyTracking-Tablet.apk` for a tablet. Open **Body Tracking Quest** from **Unknown Sources** on the Quest or **Body Tracking Tablet** from the Android launcher.
+**[Run the demo](#run-the-demo) · [Import into Unity](#import-into-unity) · [Build from source](#build-from-source) · [Troubleshooting](#troubleshooting)**
 
-| Mode | Physical trackers | What the Quest displays |
+![Tablet dashboard showing three seated avatars and separate left and right foot heights for each player](docs/images/tablet-room.png)
+
+*The game server running on a Galaxy Tab S9+ with three simulated headset clients. Seat 1 has its left foot raised 15 cm. Seat 2 has its right foot raised 25 cm.*
+
+---
+
+## Run the demo
+
+| Where | Download | What it does |
 | --- | --- | --- |
-| Six-tracker solo | Chest, hip, both thighs and both lower legs on one player | SlimeVR's solved body joints, including the knees and feet |
-| Paired feet | Left and right shoe for each of three players | Independent foot lifts and drops, plus the other players' avatars |
+| Windows x64 PC | [Windows server ZIP][windows] | Receives all six trackers. Includes both SlimeVR launchers and Java. |
+| Each Quest 3 | [Quest APK][quest] | Displays the solo mirror or joins a multiplayer seat. |
+| Android tablet, for multiplayer | [Tablet APK][tablet] | Hosts the shared room and shows all three avatars. |
 
-## Import into another Unity project
+Extract the entire Windows ZIP. When switching launchers, close the running SlimeVR GUI and server first. Connect the PC, trackers and headsets to the same LAN. Include the tablet for multiplayer. On Windows, run `ipconfig` and find the **IPv4 Address** of the Wi-Fi or Ethernet adapter on that network. This is the **Tracking PC** address the Quest asks for.
 
-In Unity 6.3, open **Window → Package Management → Package Manager**, choose **+ → Install package from git URL**, and paste the entire line.
+<details>
+<summary><strong>Install the apps over USB</strong></summary>
+
+Enable developer mode and USB debugging on the device, then accept the USB debugging prompt. From the download folder, use Android Platform Tools to list the connected devices. Replace each serial below with the one printed by `adb devices`.
+
+```shell
+adb devices
+adb -s QUEST_SERIAL install -r BodyTracking-Quest.apk
+adb -s TABLET_SERIAL install -r BodyTracking-Tablet.apk
+```
+
+On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet, open **Body Tracking Tablet** from the Android launcher.
+
+</details>
+
+### One player with six trackers
+
+1. Run **`Start-Stock-Solo.cmd`** on the PC. Pair the sensors in SlimeVR and assign them to the **chest, hip, left and right thighs, and left and right lower legs**. [SlimeVR mounting guide][mounting]
+2. Open the Quest app. Select **Six trackers / solo**, enter the PC's IPv4 address under **Tracking PC**, then choose **Start solo test**. The Quest now supplies the head pose to SlimeVR.
+3. Complete the body measurements and mounting calibration in SlimeVR. Face forward and press **A** in the room for a yaw reset. Raise one knee and watch the knee and foot on that side move in the mirror.
+
+<img src="docs/images/solo-mirror.png" alt="Unity view of the solo mirror showing the solved head, torso, knees and feet" width="640">
+
+*The solo mirror in Unity, driven by the stock Windows server and six simulated sensors. The counter shows how many of the seven solved joints the headset is receiving.*
+
+### Three seated players with two trackers each
+
+1. Run **`Start-Paired.cmd`** on the PC. Pair the sensors in SlimeVR, then give each physical sensor the exact **custom name** shown below. Each extension sensor gets its own name, even if it shares a board with another sensor.
+
+   | Quest mode | Left shoe | Right shoe |
+   | --- | --- | --- |
+   | **Paired feet / seat 1** | `P1-L` | `P1-R` |
+   | **Paired feet / seat 2** | `P2-L` | `P2-R` |
+   | **Paired feet / seat 3** | `P3-L` | `P3-R` |
+
+2. Open the tablet app. Its game server starts automatically and displays its LAN address. On each Quest, select a different seat and enter the same **Tracking PC** address. Leave **Tablet** on **Find on Wi-Fi** or enter the tablet's displayed address. Choose **Enter multiplayer room**.
+3. Sit facing forward with both shoes flat. Press **A** and hold still until the headset says **Tracking both feet**. Have seat 2 lift only its left foot, hold it, then lower it. Watch **Seat 2 → L** on the tablet and the same foot on the other players' avatars.
+4. Walk with the left stick and turn with the right. The feet travel with the virtual chair. Each shoe controls its own vertical lift, so the physical chairs can face different directions.
+
+<img src="docs/images/headset-setup.png" alt="Quest setup menu with paired feet for seat 2, a tracking PC address field, tablet discovery and the Enter multiplayer room action" width="560">
+
+*The headset menu in Unity with seat 2 selected. Press **B** in the room to return here.*
+
+| Controller | In settings | In the room |
+| --- | --- | --- |
+| Left stick | Select a row or keypad key | Walk |
+| Right stick | — | Turn |
+| **A** | Change the mode, press a key or activate the selected row | Reset yaw in solo mode or calibrate the shoes in paired mode |
+| **B** | Back out of the keypad or close settings | Open settings |
+
+<details>
+<summary><strong>Network layout and ports</strong></summary>
+
+```mermaid
+flowchart LR
+    sensors["SlimeVR trackers"] -->|UDP 6969| pc["Windows PC · SlimeVR"]
+    pc <-->|TCP 21110| quest["Quest 3 clients"]
+    quest <-->|UDP 7777| tablet["Android tablet · game server"]
+```
+
+Each Quest reads its own pair from the PC, then sends its avatar pose to the tablet. The tablet relays those poses and advertises the game on **UDP 47777**. A tablet hotspot works when its clients can reach the PC and one another.
+
+</details>
+
+---
+
+## Import into Unity
+
+In Unity 6.3, open **Window → Package Management → Package Manager → + → Install package from git URL** and paste the full line.
 
 ```text
 https://github.com/blacktheon/VRBodyTracking.git?path=/Packages/com.blacktheon.body-tracking#v0.1.0
 ```
 
-For the current development branch, replace `#v0.1.0` with `#develop`. The package reads a Unity tracking origin and head transform. It can drive an existing avatar or feed another networking system. The demo project adds the Meta Quest SDK and VRNet. [Package API and usage](Packages/com.blacktheon.body-tracking/README.md)
+Look for **Blacktheon Body Tracking** by **blacktheon**. Add `BodyTrackingClient` to a GameObject. The package works with your own rig, avatars and networking. For an Android build, set **Internet Access** to **Require** in Player Settings. [Package API and examples][api]
 
-## Try one player with six trackers
-
-1. Run `Start-Stock-Solo.cmd` on the PC and pair all six sensors in the SlimeVR setup UI. Assign one sensor to each of the six body locations in the table. Complete SlimeVR's mounting and body-dimension setup. [SlimeVR tracker placement](https://docs.slimevr.dev/server/putting-on-trackers.html)
-2. Connect the Quest 3 to a network that can reach the PC. Install and open **BodyTracking-Quest.apk**. Choose the six-tracker mode and enter the PC's LAN address.
-3. Calibrate and move a single leg. Check that the knee and foot on that side respond. The headset supplies the head pose and reads solved joints directly from the PC. This test works without the tablet.
-
-## Try three seated players
-
-1. Close the stock server and run `Start-Paired.cmd` on the PC. In SlimeVR's tracker settings give each physical sensor its own custom name. Assign the left and right shoes as `P1-L` and `P1-R`, `P2-L` and `P2-R`, and `P3-L` and `P3-R`. An extension sensor gets its own name, even when it shares hardware with another sensor.
-2. Install and open **BodyTracking-Tablet.apk** on the Android tablet. The game server starts automatically and shows the tablet address and three seats. Connect the three Quests and the PC to the same reachable LAN. A tablet hotspot also needs to allow traffic between its clients.
-3. Install the same **BodyTracking-Quest.apk** on all three Quests. In each headset choose **Paired feet** and a different seat, then enter the PC address. Leave the tablet address on **Auto** for discovery or enter the address on its dashboard.
-4. Have each player sit normally with both shoes on the floor and calibrate. Lift just player 2's left foot, hold it, then set it down. The other headsets should see that foot rise and settle. Repeat on the right, then try simultaneous movements on different players.
-5. Walk with the left joystick and turn with the right. The feet travel with the virtual chair and each shoe controls its own vertical lift. Lean forward or sideways in the physical chair to check that the grounded feet stay in place.
-
-In the headset menu, move the left stick to select an item and press **A** to edit it. The address keypad works with the same two controls. In the room, **A** calibrates and **B** reopens settings. Each virtual chair has its own starting position, so the three physical chairs can face different directions.
-
-The two-sensor mode estimates lift from vertical acceleration. A stationary shoe produces the same acceleration whether it is raised or on the floor. The client uses the preceding motion to maintain the lift and uses calibration to establish the floor again. Tracker status distinguishes a missing signal from a foot resting on the floor.
-
-**Check the shoe data before your first session.** Leave both shoes flat for a second. The Quest should say **Tracking both feet** and both sides should continue showing zero. If it says **Check shoe acceleration stream** or a still foot repeatedly loses tracking, check that the tracker sends continuous linear acceleration. On ESP trackers running SlimeVR firmware v0.7.4, rotation-based update suppression can skip a level shoe's lift or hold. For a board-specific firmware build, set `SEND_ACCELERATION` to `true` and `OPTIMIZE_UPDATES` to `false` in `src/debug.h`. Other tracker models may expose this differently. [Upstream firmware settings](https://github.com/SlimeVR/SlimeVR-Tracker-ESP/blob/v0.7.4/src/debug.h) · [Acceleration transmission](https://github.com/SlimeVR/SlimeVR-Tracker-ESP/blob/v0.7.4/src/sensors/sensor.cpp#L40-L74)
-
-## Network connections
-
-| Connection | Default endpoint | Purpose |
+| To read | Connect with | Use in your game |
 | --- | --- | --- |
-| Wi-Fi trackers → Windows PC | UDP 6969 | SlimeVR sensor input |
-| Each Quest → Windows PC | TCP 21110 | Solo body poses or that player's paired sensor readings |
-| Each Quest → tablet | UDP 7777 | Multiplayer game traffic |
-| Tablet → LAN | UDP 47777 | VRNet game discovery |
+| Solved body joints | `BodyTrackingMode.SixTrackers`, a floor tracking origin and the headset transform | When `TryGetJoint(BodyJoint.LeftFoot, out var pose)` succeeds, `pose` is in Unity world space. |
+| Seated foot lifts | `BodyTrackingMode.PairedFeet` and a seat number from 1 to 3 | `TryGetFootLift(true, out var metres)` reads the left shoe. Pass `false` for the right. |
 
-The tablet and the PC have different roles and may have different addresses. The paired mode reads only the headset's selected slot. Each connected Quest sends its own avatar movement to the tablet, which relays it to the other clients.
+<details>
+<summary><strong>Example · drive two seated foot targets</strong></summary>
+
+Save this as `SeatedFeet.cs`, attach it to a GameObject, and assign the two avatar foot targets in the Inspector. Enter the tracking PC's address and this player's seat. Start with both real feet flat.
+
+```csharp
+using Blacktheon.BodyTracking;
+using UnityEngine;
+
+[RequireComponent(typeof(BodyTrackingClient))]
+public class SeatedFeet : MonoBehaviour
+{
+    public string pcAddress;
+    [Range(1, 3)] public int seat = 1;
+    public Transform leftFoot, rightFoot;
+
+    BodyTrackingClient client;
+    Vector3 leftRest, rightRest;
+
+    void Start()
+    {
+        client = GetComponent<BodyTrackingClient>();
+        leftRest = leftFoot.localPosition;
+        rightRest = rightFoot.localPosition;
+        client.Connect(pcAddress, seat, BodyTrackingMode.PairedFeet, null, null);
+    }
+
+    void LateUpdate()
+    {
+        client.TryGetFootLift(true, out float left);
+        client.TryGetFootLift(false, out float right);
+        leftFoot.localPosition = leftRest + Vector3.up * left;
+        rightFoot.localPosition = rightRest + Vector3.up * right;
+    }
+}
+```
+
+An unavailable shoe returns `false` and zero metres, so this example puts that foot back at rest. Your UI can use the return value and `client.Status` to show signal loss. Call `client.Calibrate()` while seated to reset the floor reference.
+
+</details>
 
 ## Build from source
 
-Use Unity **6000.3.19f1** with Android Build Support, its OpenJDK, SDK and NDK. Run these commands from the repository on Windows.
+Use **Unity 6000.3.19f1** with Android Build Support, including Unity's OpenJDK, SDK and NDK. The working Unity project is on **`develop`**. To reproduce the published version, use **`v0.1.0`** in the clone command. [Browse the Unity project][develop]
 
 ```powershell
+git clone --branch develop https://github.com/blacktheon/VRBodyTracking.git
+cd VRBodyTracking
 .\Tools\Build-TestApps.ps1
-.\Tools\SlimeVR\Build-Windows.ps1
 ```
 
-The Android script writes the Quest and tablet APKs to `Builds` and checks their ARM64 ABI, internet permission and headset requirements. It builds the tablet in a project containing the networking and demo code so it launches as an ordinary Android app. Use `-Role Quest` or `-Role Tablet` to build one app. Open the test scenes in `Assets/BodyTrackingDemo/Scenes` to inspect their setup.
+The script writes both APKs to `Builds/`. Use `-Role Quest` or `-Role Tablet` for a single build. The demo entry points are `Quest.unity` and `Tablet.unity`. [Demo scenes][scenes]
 
-The Windows build script produces both server variants, the SlimeVR desktop UI and a bundled Java runtime. The paired-foot source patch and upstream notices are in `Tools/SlimeVR`. [SlimeVR Server v21.1.0](https://github.com/SlimeVR/SlimeVR-Server/releases/tag/v21.1.0)
+To rebuild the Windows companion, install Git and Node.js 22 or newer, then run `.\Tools\SlimeVR\Build-Windows.ps1`. The script builds and tests the stock and paired servers against SlimeVR v21.1.0 and writes the ZIP under `Builds/SlimeVR/`. [Windows build and protocol guide][server-source]
+
+## Troubleshooting
+
+| What you see | What to check |
+| --- | --- |
+| The headset is waiting for the PC | Check **Tracking PC** against `ipconfig`, confirm the correct launcher is running, and allow TCP 21110 on the PC's private LAN. |
+| The tablet room is missing | Open the tablet app, enter its displayed IP on the Quest, and check that the Wi-Fi or hotspot permits traffic between clients on UDP 7777. |
+| A seat is occupied or a shoe is unavailable | Give each headset its own seat. Check that each sensor is online and its custom name appears exactly once, including saved sensors currently unplugged. |
+| A level shoe loses tracking when held still | Paired mode needs continuous linear acceleration. On SlimeVR ESP firmware v0.7.4, check `SEND_ACCELERATION=true` and `OPTIMIZE_UPDATES=false` in the firmware build for your board. [Firmware settings][firmware] |
+| A foot stays raised after landing | Put both shoes flat and press **A**. A still shoe produces the same acceleration at any height. The app estimates lift from the preceding movement, so a missed impulse can leave the estimate high. |
+
+**Test coverage for v0.1.0.** Six simulated tracker devices drove the Windows servers. Three Unity clients exchanged independent foot lifts through a physical Galaxy Tab S9+, including a disconnect and rejoin. A clean Unity project installed the tagged Git package and passed its 24 package tests. Physical Quest 3 and shoe-mounted tracker validation is still pending.
+
+[release]: https://github.com/blacktheon/VRBodyTracking/releases/tag/v0.1.0
+[windows]: https://github.com/blacktheon/VRBodyTracking/releases/download/v0.1.0/VRBodyTracking-Windows-x64.zip
+[quest]: https://github.com/blacktheon/VRBodyTracking/releases/download/v0.1.0/BodyTracking-Quest.apk
+[tablet]: https://github.com/blacktheon/VRBodyTracking/releases/download/v0.1.0/BodyTracking-Tablet.apk
+[api]: https://github.com/blacktheon/VRBodyTracking/blob/v0.1.0/Packages/com.blacktheon.body-tracking/README.md
+[develop]: https://github.com/blacktheon/VRBodyTracking/tree/develop
+[scenes]: https://github.com/blacktheon/VRBodyTracking/tree/v0.1.0/Assets/BodyTrackingDemo/Scenes
+[server-source]: https://github.com/blacktheon/VRBodyTracking/blob/v0.1.0/Tools/SlimeVR/README.md
+[slimevr]: https://github.com/SlimeVR/SlimeVR-Server/releases/tag/v21.1.0
+[mounting]: https://docs.slimevr.dev/server/putting-on-trackers.html
+[firmware]: https://github.com/SlimeVR/SlimeVR-Tracker-ESP/blob/v0.7.4/src/debug.h
