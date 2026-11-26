@@ -1,0 +1,2 @@
+# A unified diff preserves the upstream indentation and the leading space on context lines.
+*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

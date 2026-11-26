@@ -1,5 +1,13 @@
 {
   "dependencies": {
+    "com.blacktheon.body-tracking": {
+      "version": "file:com.blacktheon.body-tracking",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.modules.jsonserialize": "1.0.0"
+      }
+    },
     "com.dsta.vrnet": {
       "version": "https://github.com/blacktheon/VRTrainingSystem.git?path=/Packages/com.dsta.vrnet#develop",
       "depth": 0,

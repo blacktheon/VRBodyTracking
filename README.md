@@ -20,6 +20,8 @@ Use six SlimeVR trackers on **one Quest 3** to see your knees and feet in a virt
 | Each Quest 3 | [Quest APK v0.1.0][quest] | Displays the solo mirror or joins a multiplayer seat. |
 | Android tablet, for multiplayer | [Tablet APK v0.1.0][tablet] | Hosts the shared room and shows all three avatars. |
 
+The standing and sitting controls below are in the [development build](#build-from-source). The linked **v0.1.0** APKs use **A** for calibration and show a seated multiplayer avatar.
+
 Extract the entire Windows ZIP. When switching launchers, close the running SlimeVR GUI and server first. Connect the PC, trackers and headsets to the same LAN. Include the tablet for multiplayer. On Windows, run `ipconfig` and find the **IPv4 Address** of the Wi-Fi or Ethernet adapter on that network. This is the **Tracking PC** address the Quest asks for.
 
 <details>
@@ -41,7 +43,7 @@ On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet,
 
 1. Run **`Start-Stock-Solo.cmd`** on the PC. Pair the sensors in SlimeVR and assign them to the **chest, hip, left and right thighs, and left and right lower legs**. [SlimeVR mounting guide][mounting]
 2. Open the Quest app. Select **Six trackers / solo**, enter the PC's IPv4 address under **Tracking PC**, then choose **Start solo test**. The Quest now supplies the head pose to SlimeVR.
-3. Complete the body measurements and mounting calibration in SlimeVR. Face forward and press **A** in the room for a yaw reset. Raise one knee and watch the knee and foot on that side move in the mirror.
+3. Complete the body measurements and mounting calibration in SlimeVR. With your shoes on the floor, face forward and press **X** in the room to reset yaw and set the first-person foot reference. Raise one knee and watch the knee and foot on that side move in the mirror. **A** switches your first-person avatar between standing and sitting. The mirror shows the six-tracker solve.
 
 <img src="docs/images/solo-mirror.png" alt="Unity view of the solo mirror showing the solved head, torso, knees and feet" width="640">
 
@@ -162,6 +164,8 @@ git clone --branch develop https://github.com/blacktheon/VRBodyTracking.git
 cd VRBodyTracking
 .\Tools\Build-TestApps.ps1
 ```
+
+The **v0.1.1 smoke APKs** already include both soldiers. Rebuilding that particular test requires the matching soldier-demo source and `BodyTrackingSoldiers.unitypackage`. In that checkout, choose **Assets → Import Package → Custom Package** before running the build script.
 
 The script writes both APKs to `Builds/`. Use `-Role Quest` or `-Role Tablet` for a single build. The demo entry points are `Quest.unity` and `Tablet.unity`. [Demo scenes][scenes]
 

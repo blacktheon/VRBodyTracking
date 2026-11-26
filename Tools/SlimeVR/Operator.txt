@@ -1,0 +1,30 @@
+VR Body Tracking for Windows x64
+
+Extract the entire ZIP. Close any running SlimeVR GUI and server before switching launchers.
+Both launchers use the bundled Java runtime and the normal SlimeVR configuration in your
+Windows account. Keep the PC, trackers, Quests and tablet on the same LAN.
+
+Single wearer, six IMUs
+Run Start-Stock-Solo.cmd. In the SlimeVR GUI pair the six sensors, assign chest, hip, left
+and right upper legs, and left and right lower legs. Complete SlimeVR's mounting and reset
+steps. On the Quest enter the PC's LAN address and select the solo six-tracker mode.
+
+Three seated wearers, two shoe IMUs each
+Run Start-Paired.cmd. Pair all six sensors in the SlimeVR GUI. In the settings for each
+physical sensor edit its custom name. Use the side and capital letters shown here.
+    Player 1       P1-L       P1-R
+    Player 2       P2-L       P2-R
+    Player 3       P3-L       P3-R
+An extension sensor has its own settings and custom name. Use each name exactly once,
+including saved trackers that are currently unplugged. This mode works with the body
+positions unassigned. Enter the same PC address on each Quest and choose a different
+player slot. Sit with both shoes flat and calibrate in the Quest app.
+
+The stock tracker UDP port is 6969. The Quest connects to TCP 21110 on the PC. Allow
+the appropriate ports on your private LAN if Windows Firewall blocks the connection.
+A foot becomes unavailable after 250 ms without acceleration. Closing a headset socket
+releases its slot immediately. A silent connection gives it up after three seconds.
+
+The stock server and GUI are from SlimeVR v21.1.0. The paired server is a third-party
+extension from the VRBodyTracking project. BUILD-INFO.txt identifies the exact source and
+artifacts. Original SlimeVR, Electron, Chromium and Java notices accompany the binaries.

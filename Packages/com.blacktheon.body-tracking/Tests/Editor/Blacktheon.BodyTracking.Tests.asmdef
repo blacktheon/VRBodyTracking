@@ -1,0 +1,13 @@
+{
+  "name": "Blacktheon.BodyTracking.Tests",
+  "rootNamespace": "Blacktheon.BodyTracking.Tests",
+  "references": [
+    "Blacktheon.BodyTracking"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}

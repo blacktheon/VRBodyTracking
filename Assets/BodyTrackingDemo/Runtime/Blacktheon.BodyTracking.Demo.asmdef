@@ -1,0 +1,12 @@
+{
+  "name": "Blacktheon.BodyTracking.Demo",
+  "rootNamespace": "Blacktheon.BodyTracking.Demo",
+  "references": [
+    "Blacktheon.BodyTracking",
+    "DSTA.VRNet",
+    "Unity.Netcode.Runtime",
+    "Unity.Collections",
+    "UnityEngine.UI",
+    "Unity.InputSystem"
+  ]
+}
