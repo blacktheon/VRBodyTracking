@@ -34,12 +34,15 @@ function New-TabletProject([string]$Stage) {
         'Assets/BodyTrackingDemo/Scenes/Tablet.unity', 'Assets/BodyTrackingDemo/Scenes/Tablet.unity.meta')) {
         Copy-FromProject $item $Stage
     }
+    foreach ($item in @('Assets/BodyTrackingCharacters', 'Assets/BodyTrackingCharacters.meta')) {
+        if (Test-Path -LiteralPath (Join-Path $project $item)) { Copy-FromProject $item $Stage }
+    }
     $lock = (Get-Content -Raw -LiteralPath (Join-Path $project 'Packages/packages-lock.json') | ConvertFrom-Json).dependencies
     $vrnet = $lock.'com.dsta.vrnet'
     if ($vrnet.source -ne 'git' -or $vrnet.hash -notmatch '^[0-9a-f]{40}$') { throw 'Missing VRNet Git revision in project lockfile.' }
     $deps = [ordered]@{'com.dsta.vrnet' = $vrnet.version.Split('#')[0] + '#' + $vrnet.hash}
     foreach ($id in @('com.unity.inputsystem', 'com.unity.netcode.gameobjects', 'com.unity.test-framework',
-        'com.unity.ugui', 'com.unity.modules.audio', 'com.unity.modules.imgui', 'com.unity.modules.physics',
+        'com.unity.ugui', 'com.unity.modules.animation', 'com.unity.modules.audio', 'com.unity.modules.imgui', 'com.unity.modules.physics',
         'com.unity.modules.uielements', 'com.unity.modules.unitywebrequest', 'com.unity.modules.xr')) {
         $entry = $lock.$id
         if (-not $entry.version) { throw "Missing $id version in project lockfile." }

@@ -1,6 +1,6 @@
 {
   "name": "Blacktheon.BodyTracking.Demo.PlayMode",
-  "references": ["Blacktheon.BodyTracking.Demo", "DSTA.VRNet", "Unity.Netcode.Runtime", "Unity.Networking.Transport", "Unity.InputSystem"],
+  "references": ["Blacktheon.BodyTracking.Demo", "DSTA.VRNet", "Unity.Netcode.Runtime", "Unity.Networking.Transport", "Unity.Collections", "Unity.InputSystem", "UnityEngine.UI"],
   "optionalUnityReferences": ["TestAssemblies"],
   "autoReferenced": false
 }

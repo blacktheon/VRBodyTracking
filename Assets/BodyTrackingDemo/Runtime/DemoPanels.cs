@@ -9,20 +9,30 @@ namespace Blacktheon.BodyTracking.Demo
     {
         const string Pref = "Blacktheon.SeatedDemo.";
         internal int Role; // zero selects the stock single-wearer solver.
+        internal SoldierModel Model;
         internal string Pc, Tablet;
         internal bool Solo => Role == 0;
         internal int Slot => Mathf.Max(1, Role);
         internal string Label => Solo ? "Six trackers / solo" : "Paired feet / seat " + Slot;
         internal static bool Saved => PlayerPrefs.HasKey(Pref + "role");
-        internal static DemoChoices Load() => new DemoChoices
+        // Existing installations and older network peers used armor only for seat two.
+        internal static SoldierModel LegacyModel(int slot) => slot == 2 ? SoldierModel.Armored : SoldierModel.Uniform;
+
+        internal static DemoChoices Load()
         {
-            Role = Mathf.Clamp(PlayerPrefs.GetInt(Pref + "role", 0), 0, 3),
-            Pc = PlayerPrefs.GetString(Pref + "pc", ""), Tablet = PlayerPrefs.GetString(Pref + "tablet", "")
-        };
+            int role = Mathf.Clamp(PlayerPrefs.GetInt(Pref + "role", 0), 0, 3);
+            int model = PlayerPrefs.GetInt(Pref + "model", (int)LegacyModel(role));
+            return new DemoChoices
+            {
+                Role = role, Model = model == (int)SoldierModel.Armored ? SoldierModel.Armored : SoldierModel.Uniform,
+                Pc = PlayerPrefs.GetString(Pref + "pc", ""), Tablet = PlayerPrefs.GetString(Pref + "tablet", "")
+            };
+        }
 
         internal void Save()
         {
             PlayerPrefs.SetInt(Pref + "role", Role);
+            PlayerPrefs.SetInt(Pref + "model", (int)Model);
             PlayerPrefs.SetString(Pref + "pc", Pc);
             PlayerPrefs.SetString(Pref + "tablet", Tablet);
             PlayerPrefs.Save();
@@ -106,8 +116,8 @@ namespace Blacktheon.BodyTracking.Demo
         static readonly string[] Keys = { "1", "2", "3", "Delete", "4", "5", "6", "Clear", "7", "8", "9", "Auto", ".", "0", "Save", "Back" };
         readonly RectTransform menu, hud;
         readonly Text title, detail, hint, hudText;
-        readonly Text[] lines = new Text[4], keys = new Text[16];
-        readonly Image[] rows = new Image[4], cells = new Image[16];
+        readonly Text[] lines = new Text[5], keys = new Text[16];
+        readonly Image[] rows = new Image[5], cells = new Image[16];
         readonly Action<DemoChoices> apply;
         DemoChoices draft;
         int selected, editing, key;
@@ -119,14 +129,14 @@ namespace Blacktheon.BodyTracking.Demo
         {
             this.apply = apply;
             menu = DemoUi.Canvas(parent, "Headset settings", true);
-            menu.sizeDelta = new Vector2(720, 530);
+            menu.sizeDelta = new Vector2(720, 575);
             menu.localScale = Vector3.one * 0.0015f;
-            DemoUi.Block(menu, "Background", 0, 0, 720, 530, DemoUi.Panel);
+            DemoUi.Block(menu, "Background", 0, 0, 720, 575, DemoUi.Panel);
             title = DemoUi.Label(menu, "Title", 28, 12, 664, 55, 38, Color.white, FontStyle.Bold);
             detail = DemoUi.Label(menu, "Current entry", 30, 71, 660, 46, 26, DemoUi.Muted);
             for (int i = 0; i < rows.Length; i++)
             {
-                rows[i] = DemoUi.Block(menu, "Choice", 26, 133 + 71 * i, 668, 59, DemoUi.Row);
+                rows[i] = DemoUi.Block(menu, "Choice", 26, 122 + 66 * i, 668, 59, DemoUi.Row);
                 lines[i] = DemoUi.Label(rows[i].transform, "Label", 18, 0, 640, 59, 27, Color.white);
             }
             for (int i = 0; i < keys.Length; i++)
@@ -136,7 +146,7 @@ namespace Blacktheon.BodyTracking.Demo
                 keys[i].alignment = TextAnchor.MiddleCenter;
                 keys[i].text = Keys[i];
             }
-            hint = DemoUi.Label(menu, "Controls", 30, 424, 660, 89, 23, DemoUi.Accent);
+            hint = DemoUi.Label(menu, "Controls", 30, 457, 660, 89, 23, DemoUi.Accent);
             hud = DemoUi.Canvas(parent, "Tracking status", true);
             hud.sizeDelta = new Vector2(670, 170);
             hud.localScale = Vector3.one * 0.0015f;
@@ -190,12 +200,14 @@ namespace Blacktheon.BodyTracking.Demo
                 if (editing != 0) key = ((key / 4 - move.y + 4) % 4) * 4 + (key % 4 + move.x + 4) % 4;
                 else if (move.y != 0) selected = (selected - move.y + rows.Length) % rows.Length;
                 else if (selected == 0) draft.Role = (draft.Role + move.x + 4) % 4;
+                else if (selected == 3) ToggleModel();
                 Render();
             }
             if (!input.Confirm) return;
             if (editing != 0) PressKey();
             else if (selected == 0) draft.Role = (draft.Role + 1) % 4;
-            else if (selected == 3) { apply(draft); Close(); return; }
+            else if (selected == 3) ToggleModel();
+            else if (selected == 4) { apply(draft); Close(); return; }
             else
             {
                 editing = selected;
@@ -205,6 +217,8 @@ namespace Blacktheon.BodyTracking.Demo
             }
             Render();
         }
+
+        void ToggleModel() => draft.Model = draft.Model == SoldierModel.Uniform ? SoldierModel.Armored : SoldierModel.Uniform;
 
         void PressKey()
         {
@@ -258,7 +272,8 @@ namespace Blacktheon.BodyTracking.Demo
                 lines[0].text = "Mode      " + draft.Label;
                 lines[1].text = "Tracking PC      " + (draft.Pc.Length == 0 ? "Enter LAN address" : draft.Pc);
                 lines[2].text = "Tablet      " + (draft.Tablet.Length == 0 ? "Find on Wi-Fi" : draft.Tablet);
-                lines[3].text = draft.Solo ? "Start solo test" : "Enter multiplayer room";
+                lines[3].text = "Soldier      " + draft.Model;
+                lines[4].text = draft.Solo ? "Start solo test" : "Enter multiplayer room";
                 hint.text = "Left stick selects. A selects or opens. B closes.\nIn the room, A sits or stands. X calibrates.";
             }
         }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
@@ -11,9 +12,12 @@ namespace Blacktheon.BodyTracking.Demo
     {
         const string Upload = "Blacktheon.Seated.Pose.1";
         const string Snapshot = "Blacktheon.Seated.Room.1";
+        const string Appearance = "Blacktheon.Seated.Soldier.1";
         const int PoseBytes = 2 + 5 * (3 + 4) * sizeof(float);
         const int EntryBytes = sizeof(ulong) + PoseBytes;
         readonly NetworkManager manager;
+        readonly Dictionary<ulong, SoldierModel> models = new();
+        SoldierModel? announcedModel;
         CustomMessagingManager messages;
         PoseRoster incoming = new();
         double nextSend;
@@ -33,6 +37,7 @@ namespace Blacktheon.BodyTracking.Demo
         {
             messages = manager.CustomMessagingManager;
             messages.RegisterNamedMessageHandler(Upload, ReceivePose);
+            messages.RegisterNamedMessageHandler(Appearance, ReceiveModel);
         }
 
         void StartClient()
@@ -46,12 +51,18 @@ namespace Blacktheon.BodyTracking.Demo
             messages = null;
             Roster.Clear();
             incoming.Clear();
+            models.Clear();
+            announcedModel = null;
             nextSend = 0;
         }
 
         void Leave(ulong clientId)
         {
-            if (manager.IsServer) Roster.Remove(clientId);
+            if (manager.IsServer)
+            {
+                Roster.Remove(clientId);
+                models.Remove(clientId);
+            }
             else Roster.Clear();
         }
 
@@ -63,40 +74,77 @@ namespace Blacktheon.BodyTracking.Demo
             if (manager.IsServer)
             {
                 if (manager.ConnectedClientsIds.Count == 0) return;
-                using var writer = new FastBufferWriter(1 + 3 * EntryBytes, Allocator.Temp);
-                writer.WriteValueSafe((byte)Roster.Count);
-                for (int slot = 1; slot <= 3; slot++)
-                {
-                    if (!Roster.TryGet(slot, out ulong owner, out AvatarPose pose)) continue;
-                    writer.WriteValueSafe(owner);
-                    WritePose(writer, pose);
-                }
-                messages.SendNamedMessage(Snapshot, manager.ConnectedClientsIds, writer, NetworkDelivery.UnreliableSequenced);
+                // A choice announcement also tells the server that this headset reads model IDs.
+                if (models.Count < manager.ConnectedClientsIds.Count) SendRoom(false);
+                if (models.Count > 0) SendRoom(true);
             }
             else if (manager.IsConnectedClient && local.HasValue && local.Value.IsValid)
             {
+                if (announcedModel != local.Value.Model)
+                {
+                    using var choice = new FastBufferWriter(1, Allocator.Temp);
+                    choice.WriteValueSafe((byte)local.Value.Model);
+                    messages.SendNamedMessage(Appearance, NetworkManager.ServerClientId, choice, NetworkDelivery.ReliableSequenced);
+                    announcedModel = local.Value.Model;
+                }
                 using var writer = new FastBufferWriter(PoseBytes, Allocator.Temp);
                 WritePose(writer, local.Value);
                 messages.SendNamedMessage(Upload, NetworkManager.ServerClientId, writer, NetworkDelivery.UnreliableSequenced);
             }
         }
 
+        void SendRoom(bool includeModels)
+        {
+            using var writer = new FastBufferWriter(1 + 3 * (EntryBytes + 1), Allocator.Temp);
+            writer.WriteValueSafe((byte)Roster.Count);
+            for (int slot = 1; slot <= 3; slot++)
+            {
+                if (!Roster.TryGet(slot, out ulong owner, out var pose)) continue;
+                writer.WriteValueSafe(owner);
+                WritePose(writer, pose);
+                if (includeModels) writer.WriteValueSafe((byte)pose.Model);
+            }
+            foreach (ulong client in manager.ConnectedClientsIds)
+                if (models.ContainsKey(client) == includeModels)
+                    messages.SendNamedMessage(Snapshot, client, writer, NetworkDelivery.UnreliableSequenced);
+        }
+
+        void ReceiveModel(ulong sender, FastBufferReader reader)
+        {
+            if (!manager.IsServer || !manager.ConnectedClients.ContainsKey(sender) || reader.Length - reader.Position != 1) return;
+            reader.ReadValueSafe(out byte value);
+            if (value > (byte)SoldierModel.Armored) return;
+            var model = (SoldierModel)value;
+            models[sender] = model;
+            Roster.SetModel(sender, model);
+        }
+
         void ReceivePose(ulong sender, FastBufferReader reader)
         {
             if (!manager.IsServer || !manager.ConnectedClients.ContainsKey(sender) || reader.Length - reader.Position != PoseBytes) return;
-            Roster.Put(sender, ReadPose(reader), Time.unscaledTimeAsDouble);
+            var pose = ReadPose(reader);
+            if (models.TryGetValue(sender, out var model)) pose.Model = model;
+            Roster.Put(sender, pose, Time.unscaledTimeAsDouble);
         }
 
         void ReceiveRoom(ulong sender, FastBufferReader reader)
         {
             if (sender != NetworkManager.ServerClientId || reader.Length - reader.Position < 1) return;
             reader.ReadValueSafe(out byte count);
-            if (count > 3 || reader.Length - reader.Position != count * EntryBytes) return;
+            int remaining = reader.Length - reader.Position;
+            bool includesModels = remaining == count * (EntryBytes + 1);
+            if (count > 3 || (!includesModels && remaining != count * EntryBytes)) return;
             incoming.Clear();
             for (int i = 0; i < count; i++)
             {
                 reader.ReadValueSafe(out ulong owner);
-                if (!incoming.Put(owner, ReadPose(reader), Time.unscaledTimeAsDouble)) return;
+                var pose = ReadPose(reader);
+                if (includesModels)
+                {
+                    reader.ReadValueSafe(out byte model);
+                    pose.Model = (SoldierModel)model;
+                }
+                if (!incoming.Put(owner, pose, Time.unscaledTimeAsDouble)) return;
             }
             if (incoming.Count != count) return;
             (Roster, incoming) = (incoming, Roster);
@@ -119,7 +167,7 @@ namespace Blacktheon.BodyTracking.Demo
             reader.ReadValueSafe(out byte fresh);
             return new AvatarPose
             {
-                Slot = slot, FreshFeet = fresh, Head = ReadJoint(reader), LeftHand = ReadJoint(reader),
+                Slot = slot, Model = DemoChoices.LegacyModel(slot), FreshFeet = fresh, Head = ReadJoint(reader), LeftHand = ReadJoint(reader),
                 RightHand = ReadJoint(reader), LeftFoot = ReadJoint(reader), RightFoot = ReadJoint(reader)
             };
         }
@@ -147,7 +195,11 @@ namespace Blacktheon.BodyTracking.Demo
             manager.OnClientDisconnectCallback -= Leave;
             if (messages != null)
             {
-                if (manager.IsServer) messages.UnregisterNamedMessageHandler(Upload);
+                if (manager.IsServer)
+                {
+                    messages.UnregisterNamedMessageHandler(Upload);
+                    messages.UnregisterNamedMessageHandler(Appearance);
+                }
                 if (manager.IsClient) messages.UnregisterNamedMessageHandler(Snapshot);
             }
             Stop(false);

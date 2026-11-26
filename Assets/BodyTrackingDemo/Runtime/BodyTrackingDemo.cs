@@ -83,6 +83,8 @@ namespace Blacktheon.BodyTracking.Demo
         void Apply(DemoChoices next)
         {
             bool changeRoom = !configured || next.Role != choices.Role || next.Tablet != choices.Tablet;
+            bool changeTracking = !configured || next.Role != choices.Role || next.Pc != choices.Pc;
+            bool changeModel = configured && next.Model != choices.Model;
             needsSeat |= !configured || next.Role != choices.Role;
             if (next.Role != choices.Role)
             {
@@ -92,6 +94,7 @@ namespace Blacktheon.BodyTracking.Demo
             choices = next;
             configured = true;
             choices.Save();
+            if (changeModel && !changeTracking && !changeRoom) return;
             skeleton?.ResetFootReference();
             tracking.Disconnect();
             if (!string.IsNullOrEmpty(choices.Pc))
@@ -169,9 +172,7 @@ namespace Blacktheon.BodyTracking.Demo
                     skeleton.Draw(tracking, head, body, origin.position.y);
                 }
                 var pose = PlayerPose();
-                int index = choices.Slot - 1;
-                local[index] ??= new SeatAvatar(room, choices.Slot, true);
-                local[index].Draw(pose);
+                DrawAvatar(local, pose, true);
                 if (!needsSeat && !choices.Solo) upload = pose;
             }
             relay.Tick(upload, now);
@@ -180,8 +181,7 @@ namespace Blacktheon.BodyTracking.Demo
                 if ((tablet || !choices.Solo) && relay.Roster.TryGet(i + 1, out ulong owner, out var pose)
                     && (tablet || owner != manager.LocalClientId))
                 {
-                    remote[i] ??= new SeatAvatar(room, i + 1, false);
-                    remote[i].Draw(pose);
+                    DrawAvatar(remote, pose, false);
                 }
                 else remote[i]?.Show(false);
             }
@@ -189,6 +189,18 @@ namespace Blacktheon.BodyTracking.Demo
             nextStatus = now + 0.15;
             if (tablet) dashboard.Draw(relay.Roster, network, session.Config.serverPort, now);
             else if (head != null) UpdateHeadsetStatus(upload, now);
+        }
+
+        void DrawAvatar(SeatAvatar[] views, AvatarPose pose, bool own)
+        {
+            int index = pose.Slot - 1;
+            var view = views[index];
+            if (view == null || view.Model != pose.Model)
+            {
+                view?.Remove();
+                views[index] = view = new SeatAvatar(room, pose.Slot, pose.Model, own);
+            }
+            view.Draw(pose);
         }
 
         bool TryGetLift(bool left, out float lift) => choices.Solo
@@ -203,7 +215,7 @@ namespace Blacktheon.BodyTracking.Demo
             floor.y = 0;
             return new AvatarPose
             {
-                Slot = (byte)choices.Slot, FreshFeet = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0)),
+                Slot = (byte)choices.Slot, Model = choices.Model, FreshFeet = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0)),
                 Head = new Pose(head.position, head.rotation),
                 LeftHand = Hand(leftHand, true), RightHand = Hand(rightHand, false),
                 LeftFoot = SeatedMotion.Foot(floor, body, true, hasLeft ? left : 0, sitting),

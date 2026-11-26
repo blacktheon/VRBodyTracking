@@ -48,6 +48,10 @@ sysinfo.txt
 *.apk
 *.unitypackage
 
+# Locally imported soldier artwork for the demo
+/Assets/BodyTrackingCharacters/
+/Assets/BodyTrackingCharacters.meta
+
 # macOS
 .DS_Store
 .project

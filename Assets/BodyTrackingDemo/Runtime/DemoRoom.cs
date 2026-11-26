@@ -86,22 +86,35 @@ namespace Blacktheon.BodyTracking.Demo
     internal sealed class SeatAvatar
     {
         readonly DemoRoom room;
+        readonly SoldierAvatar soldier;
         readonly Transform root, head, torso;
-        readonly Transform[] hands = new Transform[2], feet = new Transform[2],
-            thighs = new Transform[2], shins = new Transform[2], arms = new Transform[2];
-        readonly Renderer[] shoes = new Renderer[2];
+        readonly Transform[] hands, feet, thighs, shins, arms;
+        readonly Renderer[] shoes;
         readonly bool own;
         readonly Color color;
         int previousFresh = -1;
 
-        internal SeatAvatar(DemoRoom room, int slot, bool own)
+        internal SoldierModel Model { get; }
+
+        internal SeatAvatar(DemoRoom room, int slot, SoldierModel model, bool own)
         {
+            Model = model;
+            root = new GameObject((own ? "My " : "") + "Seat " + slot).transform;
+            root.SetParent(room.Root, false);
+            Show(false);
+            soldier = SoldierAvatar.Load(root, model, own);
+            if (soldier != null) return;
+
             this.room = room;
             this.own = own;
             color = DemoRoom.SeatColors[slot - 1];
             Color suit = Color.Lerp(new Color32(38, 58, 73, 255), color, 0.45f);
-            root = new GameObject((own ? "My " : "") + "Seat " + slot).transform;
-            root.SetParent(room.Root, false);
+            hands = new Transform[2];
+            feet = new Transform[2];
+            thighs = new Transform[2];
+            shins = new Transform[2];
+            arms = new Transform[2];
+            shoes = new Renderer[2];
             head = room.Part(root, "Headset", PrimitiveType.Sphere, new Vector3(0.24f, 0.25f, 0.23f), color);
             Transform visor = room.Part(head, "Visor", PrimitiveType.Cube, new Vector3(0.83f, 0.42f, 0.45f), new Color32(25, 37, 52, 255));
             visor.localPosition = new Vector3(0, 0, 0.38f);
@@ -121,7 +134,6 @@ namespace Blacktheon.BodyTracking.Demo
                 arms[i] = room.Part(root, side + "arm", PrimitiveType.Cube, Vector3.one, suit);
                 arms[i].gameObject.SetActive(!own);
             }
-            Show(false);
         }
 
         internal void Show(bool show)
@@ -129,9 +141,20 @@ namespace Blacktheon.BodyTracking.Demo
             if (root.gameObject.activeSelf != show) root.gameObject.SetActive(show);
         }
 
+        internal void Remove()
+        {
+            Show(false);
+            Object.Destroy(root.gameObject);
+        }
+
         internal void Draw(AvatarPose pose)
         {
             Show(true);
+            if (soldier != null)
+            {
+                soldier.Draw(pose);
+                return;
+            }
             Quaternion body = pose.LeftFoot.rotation;
             Vector3 up = Vector3.up;
             Vector3 chest = pose.Head.position - 0.34f * up - body * (0.05f * Vector3.forward);

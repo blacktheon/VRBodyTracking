@@ -14,6 +14,7 @@ namespace Blacktheon.BodyTracking.Demo
         readonly Camera camera;
         readonly RectTransform sidebar, content;
         readonly Text address, network;
+        readonly Text[] titles = new Text[3];
         readonly Text[] seats = new Text[3];
         string ip;
         double nextAddress;
@@ -28,7 +29,7 @@ namespace Blacktheon.BodyTracking.Demo
             camera.backgroundColor = DemoUi.Panel;
             camera.orthographic = true;
             camera.nearClipPlane = 0.1f;
-            camera.transform.position = new Vector3(3.8f, 4.6f, -5.9f);
+            camera.transform.position = new Vector3(3.8f, 3.1f, 5.9f);
             camera.transform.LookAt(Vector3.up * 0.5f);
             var canvas = DemoUi.Canvas(parent, "Tablet dashboard", false);
             sidebar = (RectTransform)DemoUi.Block(canvas, "Status panel", 0, 0, 0, 0, DemoUi.Panel).transform;
@@ -47,7 +48,7 @@ namespace Blacktheon.BodyTracking.Demo
             {
                 var card = DemoUi.Block(content, "Seat " + (i + 1), 16, 243 + 110 * i, 316, 96, DemoUi.Row);
                 DemoUi.Block(card.transform, "Color", 0, 0, 5, 96, DemoRoom.SeatColors[i]);
-                DemoUi.Label(card.transform, "Seat", 15, 5, 285, 37, 25, DemoRoom.SeatColors[i], FontStyle.Bold).text = "Seat " + (i + 1);
+                titles[i] = DemoUi.Label(card.transform, "Seat", 15, 5, 285, 37, 25, DemoRoom.SeatColors[i], FontStyle.Bold);
                 seats[i] = DemoUi.Label(card.transform, "Feet", 15, 43, 287, 49, 19, Color.white);
             }
         }
@@ -56,7 +57,7 @@ namespace Blacktheon.BodyTracking.Demo
         {
             content.localScale = Vector3.one * Mathf.Min(sidebar.rect.width / 350f, sidebar.rect.height / 595f);
             camera.rect = new Rect(0.34f, 0, 0.66f, 1);
-            camera.orthographicSize = Mathf.Max(3.8f, 5.3f / Mathf.Max(0.15f, camera.aspect));
+            FrameSoldiers(roster);
             if (ip == null || now >= nextAddress)
             {
                 nextAddress = now + 5;
@@ -65,8 +66,39 @@ namespace Blacktheon.BodyTracking.Demo
             address.text = ip;
             network.text = "UDP " + port + "     " + roster.Count + " / 3 seats\n" + status;
             for (int i = 0; i < 3; i++)
-                seats[i].text = roster.TryGet(i + 1, out _, out AvatarPose pose)
-                    ? "L  " + Lift(pose, true) + "     R  " + Lift(pose, false) : "Waiting for headset";
+            {
+                bool occupied = roster.TryGet(i + 1, out _, out AvatarPose pose);
+                titles[i].text = "Seat " + (i + 1) + (occupied ? "   ·   " + pose.Model : "");
+                seats[i].text = occupied ? "L  " + Lift(pose, true) + "     R  " + Lift(pose, false) : "Waiting for headset";
+            }
+        }
+
+        void FrameSoldiers(PoseRoster roster)
+        {
+            Transform view = camera.transform;
+            float aspect = Mathf.Max(0.15f, camera.aspect);
+            Vector3 focus = Vector3.up * 0.5f;
+            float size = Mathf.Max(3.8f, 5.3f / aspect);
+            if (roster.Count > 0)
+            {
+                Quaternion toView = Quaternion.Inverse(view.rotation);
+                Bounds group = default;
+                bool first = true;
+                for (int slot = 1; slot <= 3; slot++)
+                {
+                    if (!roster.TryGet(slot, out _, out var pose)) continue;
+                    if (first) { group = new Bounds(toView * pose.Head.position, Vector3.zero); first = false; }
+                    group.Encapsulate(toView * pose.Head.position);
+                    group.Encapsulate(toView * pose.LeftHand.position);
+                    group.Encapsulate(toView * pose.RightHand.position);
+                    group.Encapsulate(toView * pose.LeftFoot.position);
+                    group.Encapsulate(toView * pose.RightFoot.position);
+                }
+                focus = view.rotation * group.center;
+                size = Mathf.Max(1.22f, Mathf.Max(group.extents.y + 0.46f, (group.extents.x + 0.55f) / aspect));
+            }
+            camera.orthographicSize = size;
+            view.position = focus - view.forward * 9;
         }
 
         static string LocalAddresses()

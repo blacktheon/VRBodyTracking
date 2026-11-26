@@ -7,6 +7,39 @@ namespace Blacktheon.BodyTracking.Demo.Tests
     public class SeatedAvatarTests
     {
         [Test]
+        public void SavedSoldierFollowsTheHeadsetAcrossSeatsAndUpgradesAnOlderInstallation()
+        {
+            const string roleKey = "Blacktheon.SeatedDemo.role", modelKey = "Blacktheon.SeatedDemo.model";
+            bool hadRole = PlayerPrefs.HasKey(roleKey), hadModel = PlayerPrefs.HasKey(modelKey);
+            bool hadPc = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.pc"), hadTablet = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.tablet");
+            int oldRole = PlayerPrefs.GetInt(roleKey), oldModel = PlayerPrefs.GetInt(modelKey);
+            try
+            {
+                PlayerPrefs.DeleteKey(roleKey);
+                PlayerPrefs.DeleteKey(modelKey);
+                Assert.That(DemoChoices.Load().Model, Is.EqualTo(SoldierModel.Uniform));
+                PlayerPrefs.SetInt(roleKey, 2);
+                var choices = DemoChoices.Load();
+                Assert.That(choices.Model, Is.EqualTo(SoldierModel.Armored));
+                choices.Model = SoldierModel.Uniform;
+                choices.Save();
+                Assert.That(DemoChoices.Load().Model, Is.EqualTo(SoldierModel.Uniform));
+                choices.Model = SoldierModel.Armored;
+                choices.Role = 1;
+                choices.Save();
+                Assert.That(DemoChoices.Load().Model, Is.EqualTo(SoldierModel.Armored));
+            }
+            finally
+            {
+                if (hadRole) PlayerPrefs.SetInt(roleKey, oldRole); else PlayerPrefs.DeleteKey(roleKey);
+                if (hadModel) PlayerPrefs.SetInt(modelKey, oldModel); else PlayerPrefs.DeleteKey(modelKey);
+                if (!hadPc) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.pc");
+                if (!hadTablet) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.tablet");
+                PlayerPrefs.Save();
+            }
+        }
+
+        [Test]
         public void HotspotAndWifiRoutesTakePriorityOverEthernetAndMobileData()
         {
             var wireless = System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211;
@@ -62,6 +95,87 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 Assert.That(head.position, Is.EqualTo(start + Vector3.right).Using(Vector3EqualityComparer.Instance));
             }
             finally { Object.DestroyImmediate(rig); }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SoldierFollowsTrackedEyesWristsAndShoesWhenStandingAndSitting(bool own)
+        {
+            var model = new GameObject("Soldier");
+            try
+            {
+                var pelvis = Joint(model.transform, "pelvis", 0, 0.97f, 0);
+                var spine = Joint(pelvis, "spine_01", 0, 1.24f, 0);
+                var neck = Joint(spine, "neck_01", 0, 1.48f, 0);
+                var head = Joint(neck, "head", 0, 1.55f, 0);
+                var eyeL = Joint(head, "eye_l", -0.03f, 1.65f, 0.06f);
+                var eyeR = Joint(head, "eye_r", 0.03f, 1.65f, 0.06f);
+                for (int i = 0; i < 2; i++)
+                {
+                    string side = i == 0 ? "_l" : "_r";
+                    int sign = i == 0 ? -1 : 1;
+                    var thigh = Joint(pelvis, "thigh" + side, sign * 0.13f, 0.99f, 0);
+                    var calf = Joint(thigh, "calf" + side, sign * 0.15f, 0.56f, 0.02f);
+                    var foot = Joint(calf, "foot" + side, sign * 0.16f, 0.14f, -0.06f);
+                    Joint(foot, "ball" + side, sign * 0.16f, 0.025f, 0.08f);
+                    var shoulder = Joint(spine, "upperarm" + side, sign * 0.17f, 1.44f, 0);
+                    var elbow = Joint(shoulder, "lowerarm" + side, sign * 0.40f, 1.29f, -0.04f);
+                    Joint(elbow, "hand" + side, sign * 0.59f, 1.10f, 0);
+                }
+                var face = Joint(model.transform, "Face", 0, 0, 0).gameObject.AddComponent<MeshRenderer>();
+                var helmet = Joint(model.transform, "Headgear", 0, 0, 0).gameObject.AddComponent<MeshRenderer>();
+                var shirt = Joint(model.transform, "Shirt", 0, 0, 0).gameObject.AddComponent<MeshRenderer>();
+                var soldier = SoldierAvatar.Bind(model.transform, own);
+                Assert.That(soldier, Is.Not.Null);
+                Assert.That(face.enabled, Is.EqualTo(!own));
+                Assert.That(helmet.enabled, Is.EqualTo(!own));
+                Assert.That(shirt.enabled, Is.True);
+
+                var floor = new Vector3(1, 0, -2);
+                var body = Quaternion.Euler(0, 117, 0);
+                var pose = Sample(2);
+                pose.Head = new Pose(floor + Vector3.up * SeatedMotion.StandingEyeHeight, body);
+                pose.LeftHand = new Pose(pose.Head.position + body * new Vector3(-0.26f, -0.4f, 0.22f), body);
+                pose.RightHand = new Pose(pose.Head.position + body * new Vector3(0.29f, -0.35f, 0.19f), body);
+                pose.LeftFoot = SeatedMotion.Foot(floor, body, true, 0, false);
+                pose.RightFoot = SeatedMotion.Foot(floor, body, false, 0, false);
+                soldier.Draw(pose);
+                var leftThigh = pelvis.Find("thigh_l");
+                var leftCalf = leftThigh.Find("calf_l");
+                var leftFoot = leftCalf.Find("foot_l");
+                var rightFoot = pelvis.Find("thigh_r/calf_r/foot_r");
+                Vector3 restAnkle = leftFoot.position;
+                Assert.That(restAnkle.y, Is.EqualTo(0.14f).Within(0.001f));
+                Assert.That(Vector3.Dot((leftCalf.position - leftThigh.position).normalized,
+                    (leftFoot.position - leftCalf.position).normalized), Is.GreaterThan(0.9f));
+
+                pose.Head.position += new Vector3(0.12f, -0.45f, -0.08f);
+                pose.Head.rotation = body * Quaternion.Euler(57, 21, 7);
+                pose.LeftHand.position += Vector3.down * 0.3f;
+                pose.RightHand.position += Vector3.down * 0.4f;
+                pose.LeftFoot = SeatedMotion.Foot(floor, body, true, 0.27f, true);
+                pose.RightFoot = SeatedMotion.Foot(floor, body, false, 0, true);
+                soldier.Draw(pose);
+                Assert.That(Vector3.Distance((eyeL.position + eyeR.position) * 0.5f, pose.Head.position), Is.LessThan(0.001f));
+                Assert.That(Quaternion.Angle(head.rotation, pose.Head.rotation), Is.LessThan(0.1f));
+                Assert.That(Vector3.Distance(spine.Find("upperarm_l/lowerarm_l/hand_l").position,
+                    pose.LeftHand.position), Is.LessThan(0.001f));
+                Assert.That(Vector3.Distance(spine.Find("upperarm_r/lowerarm_r/hand_r").position,
+                    pose.RightHand.position), Is.LessThan(0.001f));
+                Assert.That(leftFoot.position.y - restAnkle.y, Is.EqualTo(0.27f).Within(0.001f));
+                Assert.That(rightFoot.position.y, Is.EqualTo(restAnkle.y).Within(0.001f));
+                Assert.That(Vector3.Dot((leftCalf.position - leftThigh.position).normalized,
+                    (leftFoot.position - leftCalf.position).normalized), Is.LessThan(0.6f));
+            }
+            finally { Object.DestroyImmediate(model); }
+        }
+
+        static Transform Joint(Transform parent, string name, float x, float y, float z)
+        {
+            var joint = new GameObject(name).transform;
+            joint.SetParent(parent, false);
+            joint.position = new Vector3(x, y, z);
+            return joint;
         }
 
         [Test]
