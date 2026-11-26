@@ -10,6 +10,7 @@ namespace Blacktheon.BodyTracking.Demo
     {
         [Tooltip("Start the ordinary Android tablet server. Headsets use the existing floor-level Quest rig.")]
         [SerializeField] bool tablet;
+        [SerializeField] StepOverCableMission cableMission;
 
         DemoRoom room;
         NetworkManager manager;
@@ -27,6 +28,7 @@ namespace Blacktheon.BodyTracking.Demo
         Vector3 chairInRig;
         float neutralEyeInRig;
         bool needsSeat = true, configured, sitting;
+        bool paused, focused = true;
         double nextStatus, calibrationNoticeUntil;
         string network = "Waiting for tablet";
 
@@ -72,7 +74,8 @@ namespace Blacktheon.BodyTracking.Demo
                 camera.backgroundColor = new Color32(27, 43, 58, 255);
             }
             tracking = gameObject.AddComponent<BodyTrackingClient>();
-            panel = new QuestPanel(transform, Apply);
+            cableMission?.BeginLocal(head);
+            panel = new QuestPanel(transform, Apply, cableMission != null);
             choices = DemoChoices.Load();
             if (DemoChoices.Saved) Apply(choices);
             else panel.OpenSettings(choices, head);
@@ -82,6 +85,7 @@ namespace Blacktheon.BodyTracking.Demo
 
         void Apply(DemoChoices next)
         {
+            cableMission?.ResetApproach();
             bool changeRoom = !configured || next.Role != choices.Role || next.Tablet != choices.Tablet;
             bool changeTracking = !configured || next.Role != choices.Role || next.Pc != choices.Pc;
             bool changeModel = configured && next.Model != choices.Model;
@@ -135,6 +139,7 @@ namespace Blacktheon.BodyTracking.Demo
             }
             if (controls.Calibrate)
             {
+                cableMission?.ResetApproach();
                 Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
                 if (forward.sqrMagnitude > 0.01f) body = Quaternion.LookRotation(forward.normalized);
                 RememberChair();
@@ -171,7 +176,12 @@ namespace Blacktheon.BodyTracking.Demo
                     skeleton ??= new SolvedSkeleton(room);
                     skeleton.Draw(tracking, head, body, origin.position.y);
                 }
-                var pose = PlayerPose();
+                // The calibrated chair follows joystick motion, independently of head lean and avatar posture.
+                Vector3 floor = rig.TransformPoint(chairInRig);
+                floor.y = 0;
+                var pose = PlayerPose(floor, out float left, out float right);
+                bool playing = configured && !needsSeat && !panel.Open && focused && !paused;
+                cableMission?.Tick(floor, pose.FreshFeet, left, right, playing, now);
                 DrawAvatar(local, pose, true);
                 if (!needsSeat && !choices.Solo) upload = pose;
             }
@@ -206,13 +216,10 @@ namespace Blacktheon.BodyTracking.Demo
         bool TryGetLift(bool left, out float lift) => choices.Solo
             ? skeleton.TryGetFootLift(left, out lift) : tracking.TryGetFootLift(left, out lift);
 
-        AvatarPose PlayerPose()
+        AvatarPose PlayerPose(Vector3 floor, out float left, out float right)
         {
-            bool hasLeft = TryGetLift(true, out float left);
-            bool hasRight = TryGetLift(false, out float right);
-            // Joystick locomotion moves the rig. Leaning or looking down only moves the head inside it.
-            Vector3 floor = rig.TransformPoint(chairInRig);
-            floor.y = 0;
+            bool hasLeft = TryGetLift(true, out left);
+            bool hasRight = TryGetLift(false, out right);
             return new AvatarPose
             {
                 Slot = (byte)choices.Slot, Model = choices.Model, FreshFeet = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0)),
@@ -244,7 +251,20 @@ namespace Blacktheon.BodyTracking.Demo
                     session.IsClientConnected ? "Tablet online  " + relay.Roster.Count + "/3 seats" : network;
             }
             panel.Status(choices.Label + (sitting ? "    Sitting" : "    Standing") +
-                "\nA  Sit/stand    X  Calibrate    B  Settings\n" + motion + "\n" + pc + (choices.Solo ? "" : "\n" + roomStatus));
+                "\nA  Sit/stand    X  Calibrate    B  Settings\n" + motion + "\n" + pc + (choices.Solo ? "" : "\n" + roomStatus) +
+                (cableMission != null ? "\n" + cableMission.Cue : ""));
+        }
+
+        void OnApplicationPause(bool value)
+        {
+            paused = value;
+            if (paused) cableMission?.ResetApproach();
+        }
+
+        void OnApplicationFocus(bool value)
+        {
+            focused = value;
+            if (!focused) cableMission?.ResetApproach();
         }
 
         void OnDestroy()

@@ -30,13 +30,15 @@ namespace Blacktheon.BodyTracking.Demo.Editor
 
             bool tablet = role == "Tablet";
             string output = Path.GetFullPath(args[index + 1]);
-            string scene = $"Assets/BodyTrackingDemo/Scenes/{role}.unity";
+            string scene = tablet ? "Assets/BodyTrackingDemo/Scenes/Tablet.unity" : "Assets/BodyTrackingDemo/Scenes/StepOverCable.unity";
             if (AssetDatabase.LoadAssetAtPath<SceneAsset>(scene) == null)
                 throw new BuildFailedException($"Missing demo scene {scene}.");
             var roots = EditorSceneManager.OpenScene(scene).GetRootGameObjects();
             var demo = roots.SelectMany(go => go.GetComponentsInChildren<BodyTrackingDemo>(true)).SingleOrDefault();
             if (demo == null || new SerializedObject(demo).FindProperty("tablet").boolValue != tablet)
                 throw new BuildFailedException($"The {role} scene needs a demo component configured for that device.");
+            if (new SerializedObject(demo).FindProperty("cableMission").objectReferenceValue == null)
+                throw new BuildFailedException($"The {role} scene needs its floor cable.");
             if (!tablet)
             {
                 var transforms = roots.SelectMany(go => go.GetComponentsInChildren<Transform>(true)).ToArray();
@@ -47,7 +49,6 @@ namespace Blacktheon.BodyTracking.Demo.Editor
 
             PlayerSettings.companyName = "blacktheon";
             PlayerSettings.productName = $"Body Tracking {role}";
-            PlayerSettings.bundleVersion = "0.1.0";
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, "com.blacktheon.bodytracking." + role.ToLowerInvariant());
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;

@@ -4,7 +4,7 @@
 
 Use six SlimeVR trackers on **one Quest 3** to see your knees and feet in a virtual mirror. Or give **three seated players** one tracker per shoe and let them see each other lift and lower their feet. The same standalone Quest app runs both modes. Unity developers can also import the tracking package into their own games.
 
-**[Multiplayer smoke test](#multiplayer-smoke-test) · [Run the demo](#run-the-demo) · [Import into Unity](#import-into-unity) · [Build from source](#build-from-source) · [Troubleshooting](#troubleshooting)**
+**[Multiplayer smoke test](#multiplayer-smoke-test) · [Step over the cable](#step-over-the-cable) · [Run the demo](#run-the-demo) · [Import into Unity](#import-into-unity) · [Build from source](#build-from-source) · [Troubleshooting](#troubleshooting)**
 
 ![Tablet dashboard showing three seated avatars and separate left and right foot heights for each player](docs/images/tablet-room.png)
 
@@ -53,7 +53,7 @@ On Quest, open **Body Tracking Quest** under **Unknown Sources**. On the tablet,
 
 ### Multiplayer smoke test
 
-Use the **v0.1.1 smoke APKs supplied to testers**. Two Quests and one tracker pair let both players see each other and test one player's feet. The [public v0.1.0 APKs][release] use seated avatars and **A** for calibration.
+Use the **v0.1.2 smoke APKs supplied to testers** for the cable mission. Two Quests and one tracker pair let both players see each other and test one player's feet. The [public v0.1.0 APKs][release] use seated avatars and **A** for calibration.
 
 1. **Start the tablet.** Put all devices on the same LAN. Install `BodyTracking-Quest.apk` on each Quest and `BodyTracking-Tablet.apk` on the tablet. Open **Body Tracking Tablet** and note its IP.
 2. **Start SlimeVR on Windows.** Close any other SlimeVR server and run `Start-Paired.cmd` from the extracted ZIP. Find the PC's LAN IPv4 address with `ipconfig`. [Windows server ZIP][windows]
@@ -71,9 +71,9 @@ Use the **v0.1.1 smoke APKs supplied to testers**. Two Quests and one tracker pa
 
 <img src="docs/images/headset-setup.png" alt="Quest setup showing the seat, tracking PC address and tablet discovery settings" width="560">
 
-*Quest setup with seat 2 selected. In v0.1.1, press **B** during play to change outfits. The headset remembers its choice across seats and restarts.*
+*Quest setup with seat 2 selected. In v0.1.1 and later, press **B** during play to change outfits. The headset remembers its choice across seats and restarts.*
 
-| Controller | In settings | In the v0.1.1 room |
+| Controller | In settings | In the v0.1.1 and later rooms |
 | --- | --- | --- |
 | Left stick | Select a row or keypad key | Walk |
 | Right stick | — | Turn |
@@ -82,6 +82,15 @@ Use the **v0.1.1 smoke APKs supplied to testers**. Two Quests and one tracker pa
 | **B** | Back out of the keypad or close settings | Open settings |
 
 Your avatar starts standing while you sit in your physical chair. Joystick movement keeps both boots at floor height until you lift a shoe.
+
+### Step over the cable
+
+1. Launch the **v0.1.2 Quest APK** in either tracking mode. For multiplayer, run the matching tablet APK. Look for the orange cable across the middle of the room.
+2. Stay seated, rest both feet flat and press **X** to calibrate. Use the **left stick** to approach the cable. Within **75 cm**, lift each real foot until the headset counts it (about **8 cm** of tracked lift). Either foot can go first, and you can put it down before lifting the other.
+3. Move across with the stick. Once your avatar is **15 cm past the cable**, your view turns **green for 1 second** if both feet counted, or **red for 5 seconds** if either was missed. Only the crossing player sees the tint.
+4. To check the failure case, wait for the tint to clear and cross back with both feet flat. You can retry from either side. Walking around a plug gives no result.
+
+<img src="docs/images/step-over-cable.png" alt="Orange extension cable laid across the floor between the three starting positions" width="640">
 
 <details>
 <summary><strong>Network layout and ports</strong></summary>
@@ -167,7 +176,7 @@ cd VRBodyTracking
 
 The **v0.1.1 smoke APKs** already include both soldiers. Rebuilding that particular test requires the matching soldier-demo source and `BodyTrackingSoldiers.unitypackage`. In that checkout, choose **Assets → Import Package → Custom Package** before running the build script.
 
-The script writes both APKs to `Builds/`. Use `-Role Quest` or `-Role Tablet` for a single build. The demo entry points are `Quest.unity` and `Tablet.unity`. [Demo scenes][scenes]
+The script writes both APKs to `Builds/`. Use `-Role Quest` or `-Role Tablet` for a single build. The APKs start in `StepOverCable.unity` on Quest and `Tablet.unity` on the tablet. Open `Quest.unity` in the editor for the original free tracking room. [Demo scenes][scenes]
 
 To rebuild the Windows companion, install Git and Node.js 22 or newer, then run `.\Tools\SlimeVR\Build-Windows.ps1`. The script builds and tests the stock and paired servers against SlimeVR v21.1.0 and writes the ZIP under `Builds/SlimeVR/`. [Windows build and protocol guide][server-source]
 

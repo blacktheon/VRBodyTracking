@@ -125,7 +125,7 @@ namespace Blacktheon.BodyTracking.Demo
         Vector3 direction = Vector3.forward;
         internal bool Open => menu.gameObject.activeSelf;
 
-        internal QuestPanel(Transform parent, Action<DemoChoices> apply)
+        internal QuestPanel(Transform parent, Action<DemoChoices> apply, bool cableMission = false)
         {
             this.apply = apply;
             menu = DemoUi.Canvas(parent, "Headset settings", true);
@@ -148,10 +148,11 @@ namespace Blacktheon.BodyTracking.Demo
             }
             hint = DemoUi.Label(menu, "Controls", 30, 457, 660, 89, 23, DemoUi.Accent);
             hud = DemoUi.Canvas(parent, "Tracking status", true);
-            hud.sizeDelta = new Vector2(670, 170);
+            int hudHeight = cableMission ? 202 : 170;
+            hud.sizeDelta = new Vector2(670, hudHeight);
             hud.localScale = Vector3.one * 0.0015f;
-            DemoUi.Block(hud, "Background", 0, 0, 670, 170, DemoUi.Panel);
-            hudText = DemoUi.Label(hud, "Live status", 15, 4, 640, 162, 23, Color.white);
+            DemoUi.Block(hud, "Background", 0, 0, 670, hudHeight, DemoUi.Panel);
+            hudText = DemoUi.Label(hud, "Live status", 15, 4, 640, hudHeight - 8, 23, Color.white);
             menu.gameObject.SetActive(false);
         }
 
