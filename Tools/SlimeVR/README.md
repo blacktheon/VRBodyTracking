@@ -1,6 +1,6 @@
 # Windows server source and protocol
 
-The release includes two locally built desktop JARs, the SlimeVR v21.1.0 Windows x64 GUI, and the Eclipse Temurin 17.0.21.1+2 JRE. The paired JAR adds a text message to the existing WebSocket bridge. Both JARs retain the stock single-wearer solver. The operator instructions ship with the ZIP. [Operator instructions](Operator.txt)
+The release includes two locally built desktop JARs, the SlimeVR v21.1.0 Windows x64 GUI, and the Eclipse Temurin 17.0.21.1+2 JRE. The paired JAR supports Quest discovery on the tracker UDP port and a paired-foot request on the existing WebSocket bridge. Both JARs include the stock single-wearer solver. [Operator instructions](Operator.txt)
 
 ## Build and test
 
@@ -25,6 +25,8 @@ node Tools/SlimeVR/Test-Launchers.mjs
 ```
 
 ## Paired-foot wire contract
+
+With the Quest tracking PC set to **Auto**, the headset broadcasts the ASCII string `BLACKTHEON_SLIMEVR_DISCOVER_1` on UDP 6969. The paired server replies directly to the sender from the same port with `BLACKTHEON_SLIMEVR_HERE_1`. Both messages have no terminator. This exchange works with active Wi-Fi trackers and USB receivers alike. Discovery leaves tracker registrations and player slots untouched. A Quest can also discover the stock server through its periodic heartbeat while it has no active UDP trackers. Enter the PC's LAN IPv4 address if the network filters broadcasts.
 
 Open `ws://PC:21110` and send one JSON text request per poll. The stock bridge sends its normal tracker configuration announcements on connection. The paired client consumes replies whose type matches its request.
 

@@ -55,6 +55,43 @@ index 61186d10fc0bffab6a0436f37a8140aa0e73a9d5..935c24fb796c9afe29cbde779f0fb77e
  	}
  
  	/**
+diff --git a/server/core/src/main/java/dev/slimevr/tracking/trackers/udp/TrackersUDPServer.kt b/server/core/src/main/java/dev/slimevr/tracking/trackers/udp/TrackersUDPServer.kt
+index 8a766da94ef45e7e4139bb2c3f1287843f71d3d7..b088a16905931ea297d92fe915d68f7ab911bf5b 100644
+--- a/server/core/src/main/java/dev/slimevr/tracking/trackers/udp/TrackersUDPServer.kt
++++ b/server/core/src/main/java/dev/slimevr/tracking/trackers/udp/TrackersUDPServer.kt
+@@ -317,12 +317,16 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
+ 					}
+ 					received = DatagramPacket(rcvBuffer, rcvBuffer.size)
+ 					socket.receive(received)
+-					bb.limit(received.length)
+-					bb.rewind()
+-					val connection = synchronized(connections) { connectionsByAddress[received.socketAddress] }
+-					parser.parse(bb, connection)
+-						.filterNotNull()
+-						.forEach { processPacket(received, it, connection) }
++					if (received.length == QUEST_DISCOVERY.size && QUEST_DISCOVERY.indices.all { rcvBuffer[it] == QUEST_DISCOVERY[it] }) {
++						socket.send(DatagramPacket(QUEST_REPLY, QUEST_REPLY.size, received.socketAddress))
++					} else {
++						bb.limit(received.length)
++						bb.rewind()
++						val connection = synchronized(connections) { connectionsByAddress[received.socketAddress] }
++						parser.parse(bb, connection)
++							.filterNotNull()
++							.forEach { processPacket(received, it, connection) }
++					}
+ 
+ 					queues.forEach { (t, p) ->
+ 						val q = p.firstOrNull() ?: return@forEach
+@@ -653,6 +657,9 @@ class TrackersUDPServer(private val port: Int, name: String, private val tracker
+ 	}
+ 
+ 	companion object {
++		private val QUEST_DISCOVERY = "BLACKTHEON_SLIMEVR_DISCOVER_1".toByteArray(Charsets.US_ASCII)
++		private val QUEST_REPLY = "BLACKTHEON_SLIMEVR_HERE_1".toByteArray(Charsets.US_ASCII)
++
+ 		/**
+ 		 * Change between IMU axes and OpenGL/SteamVR axes
+ 		 */
 diff --git a/server/core/src/main/java/dev/slimevr/websocketapi/PairedFeet.kt b/server/core/src/main/java/dev/slimevr/websocketapi/PairedFeet.kt
 new file mode 100644
 index 0000000000000000000000000000000000000000..52e7cfbcdb4c82b7984c2685fb256e2ec72c82f9

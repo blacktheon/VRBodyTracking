@@ -17,6 +17,62 @@ namespace Blacktheon.BodyTracking.Tests
 {
     public sealed class ClientLoopbackTests
     {
+        [TestCase(null)]
+        [TestCase("127.0.0.2:{0}")]
+        [TestCase("127.0.0.1:{0}/invalid")]
+        public void DiscoveryConnectsAfterAnnouncementAndReleasesOnFocusLoss(string hintFormat)
+        {
+            using (var server = new LoopbackBridge(false))
+            using (var announcer = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+            {
+                var rig = new GameObject("Discovery rig");
+                var client = rig.AddComponent<BodyTrackingClient>();
+                try
+                {
+                    var service = (IPEndPoint)announcer.Client.LocalEndPoint;
+                    int bridgePort = new Uri("ws://" + server.Address).Port;
+                    var discovery = new SlimeVrDiscovery(service, bridgePort, null);
+                    string oldAddress = hintFormat == null ? null : string.Format(hintFormat, bridgePort);
+                    client.ConnectAuto(discovery, 2, BodyTrackingMode.PairedFeet, null, null, oldAddress);
+                    Assert.That(client.ConnectedHost, Is.Null);
+                    WaitFor(client, server, () => announcer.Available > 0, 8500);
+                    IPEndPoint headset = null;
+                    Assert.That(Encoding.ASCII.GetString(announcer.Receive(ref headset)), Is.EqualTo("BLACKTHEON_SLIMEVR_DISCOVER_1"));
+                    Assert.That(headset.Port, Is.Not.EqualTo(service.Port));
+                    var reply = Encoding.ASCII.GetBytes("BLACKTHEON_SLIMEVR_HERE_1");
+                    announcer.Send(reply, reply.Length, headset);
+                    WaitFor(client, server, () => client.TryGetFootLift(true, out _));
+                    Assert.That(client.ConnectedHost, Is.EqualTo("127.0.0.1"));
+                    client.OnApplicationFocus(false);
+                    Assert.That(client.ConnectedHost, Is.Null);
+                    Assert.That(client.TryGetFootLift(true, out _), Is.False);
+                    client.OnApplicationFocus(true);
+                    WaitFor(client, server, () => client.TryGetFootLift(true, out _));
+                    Assert.That(server.Accepted, Is.EqualTo(2));
+                    client.Disconnect();
+                    Assert.That(client.ConnectedHost, Is.Null);
+                }
+                finally { Object.DestroyImmediate(rig); }
+            }
+        }
+
+        [Test]
+        public void GoodLastKnownAddressConnectsWithoutWaitingForBroadcast()
+        {
+            using (var server = new LoopbackBridge(false))
+            {
+                var rig = new GameObject("Known PC");
+                var client = rig.AddComponent<BodyTrackingClient>();
+                try
+                {
+                    client.ConnectAuto(2, BodyTrackingMode.PairedFeet, null, null, server.Address);
+                    WaitFor(client, server, () => client.TryGetFootLift(true, out _));
+                    Assert.That(client.ConnectedHost, Is.EqualTo("127.0.0.1"));
+                }
+                finally { Object.DestroyImmediate(rig); }
+            }
+        }
+
         [Test]
         public void ChangingModeAndFocusReleasesTheSocketAndGroundsOldReadings()
         {
@@ -74,7 +130,7 @@ namespace Blacktheon.BodyTracking.Tests
             }
         }
 
-        private static void WaitFor(BodyTrackingClient client, LoopbackBridge server, Func<bool> ready)
+        private static void WaitFor(BodyTrackingClient client, LoopbackBridge server, Func<bool> ready, int timeoutMs = 5000)
         {
             var timer = Stopwatch.StartNew();
             do
@@ -85,7 +141,7 @@ namespace Blacktheon.BodyTracking.Tests
                 if (server.Error != null)
                     Assert.Fail(server.Error);
                 Thread.Sleep(10);
-            } while (timer.ElapsedMilliseconds < 5000);
+            } while (timer.ElapsedMilliseconds < timeoutMs);
             Assert.Fail("No usable data from the loopback bridge. " + client.Status);
         }
 

@@ -1,6 +1,6 @@
 {
   "name": "com.blacktheon.body-tracking",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "displayName": "Blacktheon Body Tracking",
   "description": "SlimeVR solved body poses and seated shoe lift for Unity.",
   "unity": "6000.3",
@@ -8,6 +8,7 @@
     "name": "blacktheon"
   },
   "dependencies": {
+    "com.unity.modules.androidjni": "1.0.0",
     "com.unity.modules.jsonserialize": "1.0.0"
   }
 }

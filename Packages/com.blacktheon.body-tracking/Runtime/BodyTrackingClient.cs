@@ -12,7 +12,10 @@ namespace Blacktheon.BodyTracking
         [SerializeField, Range(0.03f, 0.75f), Tooltip("Upper bound of an estimated foot lift in metres.")]
         private float maximumFootLift = 0.35f;
 
+        private const string Searching = "Searching for SlimeVR on Wi-Fi";
         private Uri endpoint;
+        private Uri lastKnownEndpoint;
+        private SlimeVrDiscovery discovery;
         private int slot;
         private BodyTrackingMode mode;
         private Transform origin;
@@ -23,9 +26,10 @@ namespace Blacktheon.BodyTracking
         private bool focused = true;
         private bool observedOpen;
         private int failures;
-        private double openedAt, nextAttempt, nextPoll;
+        private double openedAt, nextAttempt, nextPoll, nextHint;
 
         public string Status { get; private set; } = "Disconnected";
+        public string ConnectedHost { get; private set; }
 
         public void Connect(string host, int slot, BodyTrackingMode mode, Transform trackingOrigin, Transform head)
         {
@@ -35,6 +39,24 @@ namespace Blacktheon.BodyTracking
                 Status = "Enter the SlimeVR PC host or IP address";
                 return;
             }
+            Configure(address, null, slot, mode, trackingOrigin, head);
+        }
+
+        public void ConnectAuto(int slot, BodyTrackingMode mode, Transform trackingOrigin, Transform head, string lastKnownHost = null)
+        {
+            ConnectAuto(new SlimeVrDiscovery(), slot, mode, trackingOrigin, head, lastKnownHost);
+        }
+
+        internal void ConnectAuto(SlimeVrDiscovery search, int slot, BodyTrackingMode mode, Transform trackingOrigin, Transform head, string lastKnownHost)
+        {
+            Disconnect();
+            if (!TryEndpoint(lastKnownHost, out var hint))
+                hint = null;
+            Configure(hint, search, slot, mode, trackingOrigin, head);
+        }
+
+        private void Configure(Uri address, SlimeVrDiscovery search, int slot, BodyTrackingMode mode, Transform trackingOrigin, Transform head)
+        {
             if (mode != BodyTrackingMode.SixTrackers && mode != BodyTrackingMode.PairedFeet)
             {
                 Status = "Unknown tracking mode";
@@ -52,6 +74,8 @@ namespace Blacktheon.BodyTracking
             }
 
             endpoint = address;
+            discovery = search;
+            lastKnownEndpoint = search == null ? null : address;
             this.mode = mode;
             this.slot = slot;
             origin = trackingOrigin;
@@ -61,11 +85,14 @@ namespace Blacktheon.BodyTracking
 
         public void Disconnect()
         {
+            discovery?.Stop();
+            discovery = null;
+            lastKnownEndpoint = null;
             endpoint = null;
             origin = null;
             hmd = null;
             failures = 0;
-            nextAttempt = 0;
+            nextAttempt = nextHint = 0;
             StopAttempt();
             Status = "Disconnected";
         }
@@ -112,19 +139,30 @@ namespace Blacktheon.BodyTracking
 
         private void RefreshActivity()
         {
-            if (endpoint == null)
+            if (endpoint == null && discovery == null)
                 return;
             if (!isActiveAndEnabled || paused || !focused)
                 Suspend();
             else if (socket == null)
-                StartAttempt();
+            {
+                if (endpoint != null)
+                    StartAttempt();
+                else
+                    Status = Searching;
+            }
         }
 
         private void Suspend()
         {
-            if (endpoint == null)
+            if (endpoint == null && discovery == null)
                 return;
             StopAttempt();
+            if (discovery != null)
+            {
+                discovery.Stop();
+                endpoint = lastKnownEndpoint;
+                nextAttempt = 0;
+            }
             Status = "Tracking suspended";
         }
 
@@ -142,11 +180,23 @@ namespace Blacktheon.BodyTracking
             socket?.Stop();
             socket = null;
             session = null;
+            ConnectedHost = null;
         }
 
         private void Retry(string reason, double now)
         {
+            bool confirmed = ConnectedHost != null;
             StopAttempt();
+            if (discovery != null)
+            {
+                if (!confirmed)
+                    discovery.Reject(endpoint, now);
+                endpoint = null;
+                nextAttempt = now + 0.25;
+                nextHint = now + (confirmed ? 2 : 12);
+                Status = Searching + " — " + reason;
+                return;
+            }
             double delay = Math.Min(8, 0.5 * (1 << Math.Min(failures, 4)));
             failures = Math.Min(failures + 1, 4);
             nextAttempt = now + delay;
@@ -155,12 +205,20 @@ namespace Blacktheon.BodyTracking
 
         internal void Update()
         {
-            if (endpoint == null || paused || !focused)
+            if ((endpoint == null && discovery == null) || paused || !focused)
                 return;
             double now = BridgeSocket.Now;
             if (socket == null)
             {
-                if (now >= nextAttempt)
+                if (now < nextAttempt)
+                    return;
+                if (endpoint == null)
+                {
+                    endpoint = discovery.Find(now);
+                    if (endpoint == null && now >= nextHint)
+                        endpoint = lastKnownEndpoint;
+                }
+                if (endpoint != null)
                     StartAttempt();
                 return;
             }
@@ -187,7 +245,18 @@ namespace Blacktheon.BodyTracking
                 return;
             }
             if (!double.IsNegativeInfinity(session.LastReply))
+            {
                 failures = 0;
+                if (ConnectedHost == null)
+                {
+                    ConnectedHost = endpoint.Host;
+                    if (discovery != null)
+                    {
+                        lastKnownEndpoint = endpoint;
+                        discovery.Stop();
+                    }
+                }
+            }
             if (mode == BodyTrackingMode.SixTrackers && (!origin || !hmd))
             {
                 Status = "Tracking origin or head is missing";

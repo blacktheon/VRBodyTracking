@@ -218,6 +218,30 @@ async function checkPairs(ctx) {
   console.log('PASS immediate slot release, silent-owner expiry and exclusive reclaim');
 }
 
+async function checkDiscovery(port) {
+  const probe = dgram.createSocket('udp4');
+  const replies = [];
+  probe.on('message', (bytes, sender) => replies.push({ bytes, sender }));
+  try {
+    const connected = once(probe, 'connect');
+    probe.connect(port, '127.0.0.1');
+    await connected;
+    const request = 'BLACKTHEON_SLIMEVR_DISCOVER_1';
+    probe.send(request + '\n');
+    probe.send(request.slice(0, -1));
+    probe.send(request.replace('_1', '_2'));
+    await sleep(120);
+    assert.equal(replies.length, 0, 'Malformed discovery request received a reply');
+    probe.send(request);
+    await until(() => replies.length > 0, 'No discovery reply from the active tracker socket');
+    assert.deepEqual(replies[0].bytes, Buffer.from('BLACKTHEON_SLIMEVR_HERE_1', 'ascii'));
+    assert.equal(replies[0].sender.port, port);
+    console.log('PASS paired discovery with six active UDP trackers, exact signatures and unicast reply');
+  } finally {
+    probe.close();
+  }
+}
+
 async function checkEditedMapping(ctx) {
   const a = await connect(ctx.clients);
   const b = await connect(ctx.clients);
@@ -304,6 +328,6 @@ await new Promise(resolve => guard.close(resolve));
 if (stockOnly) {
   await runFixture(false, checkSolver);
 } else {
-  await runFixture(false, async ctx => { await checkPairs(ctx); await checkSolver(ctx); });
+  await runFixture(false, async ctx => { await checkDiscovery(ctx.port); await checkPairs(ctx); await checkSolver(ctx); });
   await runFixture(true, checkEditedMapping);
 }
