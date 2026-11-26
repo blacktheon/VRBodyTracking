@@ -47,6 +47,135 @@ namespace Blacktheon.BodyTracking.Tests
         }
 
         [Test]
+        public void ImmediateTurnaroundLowersBeforeLandingOnEachStep()
+        {
+            for (int step = 0; step < 2; step++)
+            {
+                Samples(2.4f, 9);
+                Samples(-2.4f, 9); // Braking the lift runs directly into the downstroke.
+                float apex = Read();
+                Assert.That(apex, Is.GreaterThan(0.03f));
+                Samples(-2.4f, 7);
+                Assert.That(Read(), Is.LessThan(apex - 0.008f));
+                Samples(-2.4f, 2);
+                Samples(2.4f, 9);
+                Samples(0f, 8);
+                Assert.That(Read(), Is.Zero);
+            }
+        }
+
+        [Test]
+        public void GentleLoweringMovesBeforeTheShoeComesToRest()
+        {
+            Rise();
+            Samples(0f, 100);
+            float held = Read();
+            Samples(-0.35f, 15);
+            Assert.That(Read(), Is.LessThan(held - 0.008f));
+            Samples(0f, 8);
+            Samples(0.35f, 15);
+            Samples(0f, 8);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void SoftDownstrokeRetainsWeakReadingsLeadingIntoAPeak()
+        {
+            Rise();
+            float held = Read();
+            Sample(-0.21f, 70);
+            Sample(-0.22f, 70);
+            Sample(-0.21f, 70);
+            Sample(-0.19f, 70);
+            Sample(-0.35f, 70);
+            Assert.That(Read(), Is.LessThan(held - 0.006f));
+            Samples(0.35f, 15);
+            Samples(0f, 10);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void HeldShoeDoesNotDropFromASmallSustainedBias()
+        {
+            Rise();
+            float held = Read();
+            Samples(-0.21f, 125);
+            Samples(0.21f, 30);
+            Samples(0f, 20);
+            Assert.That(Read(), Is.EqualTo(held).Within(0.003f));
+        }
+
+        [Test]
+        public void ALandingPeakConfirmsAWeakDownstrokeAfterCoasting()
+        {
+            Rise();
+            for (int i = 0; i < 4; i++)
+                Sample(-0.20f, 90);
+            for (int i = 0; i < 4; i++)
+                Sample(0f, 75);
+            Sample(0.22f, 80);
+            Sample(0.43f, 70);
+            Sample(0.34f, 60);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void SparseDownstrokeFollowedByLandingPlantsTheShoe()
+        {
+            Rise();
+            Sample(-2f, 105);
+            Sample(0f, 65);
+            Sample(3.8f, 64);
+            Sample(0f, 85);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void DownstrokeWithASofterImpactAcrossSeveralReadingsPlantsTheShoe()
+        {
+            Rise();
+            Sample(-2f, 70);
+            Sample(0f, 60);
+            Samples(1f, 4);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void BrakingAfterTheEstimatedFloorDoesNotStartAnExtraLift()
+        {
+            Rise();
+            Samples(-3.2f, 8);
+            Samples(0f, 5); // Coasting downward can reach the estimated floor before the real one.
+            Samples(3.2f, 8);
+            Samples(0f, 20);
+            Assert.That(Read(), Is.Zero);
+        }
+
+        [Test]
+        public void HeldShoeRejectsAlternatingNoiseAndAnIsolatedDownwardShock()
+        {
+            Rise();
+            float held = Read();
+            for (int i = 0; i < 50; i++)
+            {
+                Sample(-0.32f, 20);
+                Sample(0.32f, 20);
+            }
+            Sample(-4f, 110);
+            Samples(0f, 60);
+            Assert.That(Read(), Is.EqualTo(held).Within(0.003f));
+        }
+
+        [Test]
+        public void BrakingACappedLiftKeepsTheShoeRaised()
+        {
+            Samples(8f, 18);
+            Samples(-8f, 18);
+            Samples(0f, 100);
+            Assert.That(Read(), Is.GreaterThan(0.32f));
+        }
+
+        [Test]
         public void DuplicateSamplesCannotKeepARaisedFootAvailable()
         {
             Rise();
@@ -138,10 +267,13 @@ namespace Blacktheon.BodyTracking.Tests
         private void Samples(float acceleration, int count, string id = "shoe-a")
         {
             for (int i = 0; i < count; i++)
-            {
-                time += 20;
-                foot.Accept(id, true, acceleration, time, Now);
-            }
+                Sample(acceleration, 20, id);
+        }
+
+        private void Sample(float acceleration, int milliseconds, string id = "shoe-a")
+        {
+            time += milliseconds;
+            foot.Accept(id, true, acceleration, time, Now);
         }
 
         private float Read()

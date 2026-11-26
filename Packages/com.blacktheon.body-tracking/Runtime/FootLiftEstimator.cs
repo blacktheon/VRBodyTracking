@@ -10,11 +10,14 @@ namespace Blacktheon.BodyTracking
         private const float OnsetSeconds = 0.028f;
         private const float Deadband = 0.16f;
         private const float MaxSpeed = 1.5f;
+        private const float LandingWindow = 0.55f;
 
         private enum Motion { Grounded, Rising, Held, Falling }
 
         private readonly float threshold;
         private readonly float maxHeight;
+        private readonly float loweringThreshold;
+        private readonly float minimumLoweringImpulse;
         private string identity;
         private long lastSource;
         private double lastReceipt;
@@ -31,13 +34,18 @@ namespace Blacktheon.BodyTracking
         private float onsetTime;
         private int onsetSamples;
         private float onsetSpeed;
+        private float onsetGap;
+        private float landingImpulse;
+        private bool hasMotionPeak;
         private bool braked;
-        private bool onsetArmed;
+        private bool liftArmed;
 
         public FootLiftEstimator(float motionThreshold = 0.7f, float maximumLift = 0.35f)
         {
             threshold = Mathf.Clamp(motionThreshold, 0.25f, 4f);
             maxHeight = Mathf.Clamp(maximumLift, 0.03f, 0.75f);
+            loweringThreshold = Mathf.Max(0.24f, threshold * 0.4f);
+            minimumLoweringImpulse = Mathf.Max(0.05f, threshold * 0.08f);
         }
 
         public void Accept(string id, bool valid, float acceleration, long sourceMs, double receivedAt)
@@ -129,44 +137,93 @@ namespace Blacktheon.BodyTracking
 
             if (motion == Motion.Grounded || motion == Motion.Held)
             {
-                // Let the first gesture finish braking before its opposite can be interpreted as a new gesture.
-                if (!onsetArmed && quietTime >= 0.06f)
-                    onsetArmed = true;
-                float direction = motion == Motion.Grounded ? 1f : -1f;
-                if (!onsetArmed || direction * acceleration < threshold)
-                {
-                    onsetSpeed = onsetTime = 0f;
-                    onsetSamples = 0;
-                    return;
-                }
-
-                onsetTime += dt;
-                onsetSamples++;
-                onsetSpeed += acceleration * dt;
-                if (onsetSamples < 2 || onsetTime < OnsetSeconds)
-                    return;
-
-                motion = direction > 0f ? Motion.Rising : Motion.Falling;
-                velocity = Mathf.Clamp(onsetSpeed, -MaxSpeed, MaxSpeed);
-                height = Mathf.Clamp(height + 0.5f * velocity * onsetTime, 0f, maxHeight);
-                motionTime = onsetTime;
-                quietTime = 0f;
-                braked = false;
+                DetectMotion(acceleration, dt);
                 return;
             }
 
             float sign = motion == Motion.Rising ? 1f : -1f;
-            braked |= sign * acceleration < -threshold * 0.6f;
-            float nextVelocity = Mathf.Clamp(velocity + acceleration * dt, -MaxSpeed, MaxSpeed);
-            height = Mathf.Clamp(height + 0.5f * (velocity + nextVelocity) * dt, 0f, maxHeight);
+            braked |= sign * acceleration < -(motion == Motion.Rising ? threshold * 0.6f : loweringThreshold);
+            // Bound the displayed speed while retaining the impulse needed to brake a fast lift.
+            float nextVelocity = velocity + acceleration * dt;
+            float meanSpeed = Mathf.Clamp(0.5f * (velocity + nextVelocity), -MaxSpeed, MaxSpeed);
+            height = Mathf.Clamp(height + meanSpeed * dt, 0f, maxHeight);
             velocity = nextVelocity;
 
             bool stopped = (braked && sign * velocity <= 0.025f) ||
                            quietTime >= (braked ? 0.10f : 0.25f) || motionTime >= 0.9f;
-            if (motion == Motion.Rising && (stopped || height >= maxHeight))
-                Rest(height >= 0.012f ? Motion.Held : Motion.Grounded);
-            else if (motion == Motion.Falling && (stopped || height <= 0.003f))
-                Rest(Motion.Grounded);
+            // The displayed foot can reach the floor early. Finish the downstroke before a landing
+            // impulse can be mistaken for a second lift.
+            if (stopped)
+                Rest(motion == Motion.Rising && height >= 0.012f ? Motion.Held : Motion.Grounded);
+        }
+
+        private void DetectMotion(float acceleration, float dt)
+        {
+            bool lowering = motion == Motion.Held;
+            if (!lowering && !liftArmed)
+            {
+                liftArmed = quietTime >= 0.06f;
+                return;
+            }
+
+            if (lowering && onsetSamples > 0)
+            {
+                onsetGap += dt;
+                if (onsetGap > LandingWindow)
+                    ClearOnset();
+            }
+            bool moving = lowering ? -acceleration >= Deadband : acceleration >= threshold;
+            if (!moving)
+            {
+                // A slow receiver may capture a single downstroke. Opposing impulse confirms
+                // contact, even if the landing spans several readings or follows a brief coast.
+                if (lowering && -onsetSpeed >= minimumLoweringImpulse)
+                {
+                    hasMotionPeak |= acceleration >= loweringThreshold;
+                    landingImpulse += Mathf.Max(acceleration, 0f) * dt;
+                    if (hasMotionPeak && landingImpulse >= minimumLoweringImpulse)
+                        Rest(Motion.Grounded);
+                }
+                else if (!lowering || acceleration > 0f)
+                    ClearOnset();
+                return;
+            }
+
+            onsetGap = 0f;
+            landingImpulse = 0f;
+            onsetTime += dt;
+            onsetSamples++;
+            onsetSpeed += acceleration * dt;
+            if (lowering)
+            {
+                hasMotionPeak |= -acceleration >= loweringThreshold;
+                // Keep the gentle start of a downstroke. A small sustained bias alone cannot
+                // trigger movement or accumulate an arbitrarily large initial velocity.
+                if (!hasMotionPeak)
+                {
+                    onsetSpeed = Mathf.Max(onsetSpeed, -minimumLoweringImpulse);
+                    onsetTime = Mathf.Min(onsetTime, LandingWindow);
+                    return;
+                }
+                if (-onsetSpeed < minimumLoweringImpulse)
+                    return;
+            }
+            if (onsetSamples < 2 || onsetTime < OnsetSeconds)
+                return;
+
+            motion = lowering ? Motion.Falling : Motion.Rising;
+            velocity = onsetSpeed;
+            height = Mathf.Clamp(height + 0.5f * Mathf.Clamp(velocity, -MaxSpeed, MaxSpeed) * onsetTime, 0f, maxHeight);
+            motionTime = onsetTime;
+            quietTime = 0f;
+            braked = false;
+        }
+
+        private void ClearOnset()
+        {
+            onsetGap = onsetTime = onsetSpeed = landingImpulse = 0f;
+            onsetSamples = 0;
+            hasMotionPeak = false;
         }
 
         private void Rest(Motion resting)
@@ -176,12 +233,10 @@ namespace Blacktheon.BodyTracking
                 height = 0f;
             velocity = 0f;
             motionTime = 0f;
-            onsetTime = 0f;
-            onsetSamples = 0;
-            onsetSpeed = 0f;
+            ClearOnset();
             braked = false;
-            // A landing may still have positive acceleration. Wait for it to settle before another lift.
-            onsetArmed = !calibrated || quietTime >= 0.06f;
+            // Only a landing needs a quiet interval to distinguish a new lift from its impact.
+            liftArmed = !calibrated;
             quietTime = 0f;
         }
 
