@@ -34,7 +34,7 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                     Transform Bone(string name) => bones.Single(b => b.name == name + side);
                     Transform shoulder = Bone("upperarm"), elbow = Bone("lowerarm"), wrist = Bone("hand");
                     Transform middle = Bone("middle_01"), index = Bone("index_01"), pinky = Bone("pinky_01");
-                    float palmRadius = Vector3.Distance(wrist.position, middle.position) * 0.5f;
+                    float palmRadius = Vector3.Distance(wrist.position, middle.position) * 0.30f;
                     Vector3 wristPoint = floor + heading * new Vector3(left ? -0.27f : 0.27f, 1.24f, 0.23f);
                     var neutral = heading * Quaternion.Euler(-18, left ? 12 : -12, 0);
 
@@ -46,7 +46,8 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                         soldier.Draw(pose);
                         Vector3 along = (middle.position - wrist.position).normalized;
                         Vector3 towardIndex = Vector3.ProjectOnPlane(index.position - pinky.position, along).normalized;
-                        Assert.That(Vector3.Distance(wrist.position, wristPoint), Is.LessThan(0.001f), side + " wrist pivot");
+                        Vector3 palmHeel = Vector3.Lerp(wrist.position, middle.position, 0.20f);
+                        Assert.That(Vector3.Distance(palmHeel, wristPoint), Is.LessThan(0.001f), side + " palm heel pivot");
                         Assert.That(Vector3.Distance((wrist.position + middle.position) * 0.5f, grip.position),
                             Is.LessThan(0.001f), side + " palm center");
                         Assert.That(Vector3.Angle(along, turn * Vector3.forward), Is.LessThan(0.2f), side + " fingers");
@@ -89,7 +90,9 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 var shoulder = bones.Single(b => b.name == "upperarm_r");
                 var elbow = bones.Single(b => b.name == "lowerarm_r");
                 var wrist = bones.Single(b => b.name == "hand_r");
-                Vector3 Hinge() => Vector3.Cross(elbow.position - shoulder.position, wrist.position - elbow.position).normalized;
+                var middle = bones.Single(b => b.name == "middle_01_r");
+                Vector3 Hinge() => Vector3.Cross(elbow.position - shoulder.position,
+                    Vector3.Lerp(wrist.position, middle.position, 0.20f) - elbow.position).normalized;
                 Vector3 localHinge = elbow.InverseTransformDirection(Hinge());
                 var soldier = SoldierAvatar.Bind(model.transform, false);
                 var pose = new AvatarPose
@@ -110,6 +113,8 @@ namespace Blacktheon.BodyTracking.Demo.Tests
         }
 
         [TestCase("Uniform", "_l")]
+        [TestCase("Uniform", "_r")]
+        [TestCase("Armored", "_l")]
         [TestCase("Armored", "_r")]
         public void APhysicalWristWaveMovesTheHandMeshAndKeepsTheSleeveStable(string style, string side)
         {
@@ -124,15 +129,23 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 var renderers = model.GetComponentsInChildren<SkinnedMeshRenderer>();
                 var sleeve = renderers.Single(r => r.name == "Shirt");
                 var hands = renderers.Single(r => r.name == "Hands");
-                var source = sleeve.sharedMesh;
-                var vertices = source.vertices;
-                var weights = source.boneWeights;
-                int wristIndex = System.Array.IndexOf(sleeve.bones, wrist);
-                Vector3 forearm = wrist.position - elbow.position;
-                var wristSeam = Enumerable.Range(0, vertices.Length).Where(i =>
-                    weights[i].boneIndex0 == wristIndex && weights[i].weight0 > 0.999f &&
-                    Vector3.Dot(sleeve.transform.TransformPoint(vertices[i]) - elbow.position, forearm) > 0.98f * forearm.sqrMagnitude).ToArray();
-                Assert.That(wristSeam.Length, Is.GreaterThan(10));
+                Vector3 palm = middle.position - wrist.position;
+                int[] Band(SkinnedMeshRenderer skin, float start, float stop)
+                {
+                    var vertices = skin.sharedMesh.vertices;
+                    return Enumerable.Range(0, vertices.Length).Where(i =>
+                    {
+                        Vector3 delta = skin.transform.TransformPoint(vertices[i]) - wrist.position;
+                        float along = Vector3.Dot(delta, palm) / palm.sqrMagnitude;
+                        return along >= start && along <= stop && Vector3.ProjectOnPlane(delta, palm).magnitude < 0.055f;
+                    }).ToArray();
+                }
+                var distalForearm = Band(sleeve, -0.5f, 0.06f);
+                var handCuff = Band(hands, -0.3f, 0.06f);
+                var palmBase = Band(hands, 0.4f, 0.7f);
+                Assert.That(distalForearm.Length, Is.GreaterThan(20));
+                Assert.That(handCuff.Length, Is.GreaterThan(10));
+                Assert.That(palmBase.Length, Is.GreaterThan(10));
                 var soldier = SoldierAvatar.Bind(model.transform, false);
                 Vector3[] Vertices(SkinnedMeshRenderer renderer)
                 {
@@ -141,7 +154,7 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                     return System.Array.ConvertAll(baked.vertices, v => renderer.transform.position + renderer.transform.rotation * v);
                 }
                 bool left = side == "_l";
-                float radius = Vector3.Distance(wrist.position, middle.position) * 0.5f;
+                float radius = Vector3.Distance(wrist.position, middle.position) * 0.30f;
                 var pivot = new Vector3(left ? -0.28f : 0.28f, 1.22f, 0.31f);
                 var pose = new AvatarPose
                 {
@@ -172,8 +185,12 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 float handTravel = Enumerable.Range(0, handAfter.Length).Max(i => Vector3.Distance(handAtRest[i], handAfter[i]));
                 Assert.That(sleeveTravel, Is.LessThan(0.002f), "middle of the sleeve");
                 Assert.That(handTravel, Is.GreaterThan(0.03f), "visible hand");
-                float seamGap = wristSeam.Max(i => Vector3.Distance(pivot + wave * (sleeveAtRest[i] - pivot), sleeveAfter[i]));
-                Assert.That(seamGap, Is.LessThan(0.002f), "skin at the wrist seam follows the hand");
+                float forearmTravel = distalForearm.Max(i => Vector3.Distance(sleeveAtRest[i], sleeveAfter[i]));
+                float cuffTravel = handCuff.Max(i => Vector3.Distance(handAtRest[i], handAfter[i]));
+                float palmError = palmBase.Max(i => Vector3.Distance(pivot + wave * (handAtRest[i] - pivot), handAfter[i]));
+                Assert.That(forearmTravel, Is.LessThan(0.002f), "forearm stays planted right up to the base of the hand");
+                Assert.That(cuffTravel, Is.LessThan(0.002f), "overlapping skin or glove stays with the forearm");
+                Assert.That(palmError, Is.LessThan(0.002f), "palm rotates around its heel");
             }
             finally { Object.DestroyImmediate(baked); Object.DestroyImmediate(model); }
         }

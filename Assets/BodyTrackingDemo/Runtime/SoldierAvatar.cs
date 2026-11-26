@@ -8,6 +8,8 @@ namespace Blacktheon.BodyTracking.Demo
     // The prefab stands on its root's floor plane and faces +Z. Bone axes come from its bind pose.
     internal sealed class SoldierAvatar
     {
+        // The imported hand bone sits inside the distal forearm; the palm heel is a fifth of the way to the knuckles.
+        internal const float PalmHeelFraction = 0.20f;
         readonly Transform model, head;
         readonly Vector3 restHead, headToEyes;
         readonly Quaternion headRotation;
@@ -74,9 +76,11 @@ namespace Blacktheon.BodyTracking.Demo
                 if (legs[i] == null || arms[i] == null) return null;
             }
             foreach (var skin in model.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-                if (skin.name == "Shirt" && !SoldierSleeveSkin.TryFit(skin,
-                    Bone("lowerarm_l"), Bone("hand_l"), Bone("lowerarm_r"), Bone("hand_r")))
+            {
+                if (skin.name != "Shirt" && skin.name != "Hands") continue;
+                if (!SoldierWristSkin.TryFit(skin, Bone) && skin.name == "Shirt")
                     foreach (var arm in arms) arm.BindRigidCuff(skin);
+            }
             foreach (var animator in model.GetComponentsInChildren<Animator>(true)) animator.enabled = false;
             if (own)
             {
@@ -108,10 +112,11 @@ namespace Blacktheon.BodyTracking.Demo
         {
             readonly Transform upper, lower, end;
             readonly Quaternion upperRotation, lowerRotation, endRotation;
-            readonly Vector3 upperDirection, lowerDirection, targetOffset, elbowPole;
+            readonly Vector3 upperDirection, lowerDirection, targetOffset, elbowPole, heelToHandBone;
             readonly float upperLength, lowerLength;
             readonly bool leg;
             Transform cuff;
+            readonly Vector3 cuffToHeel;
 
             internal static Limb Bind(Transform model, Transform upper, Transform lower, Transform end, Transform tip,
                 bool leg, bool left = false, Transform index = null, Transform pinky = null)
@@ -133,7 +138,6 @@ namespace Blacktheon.BodyTracking.Demo
                 upperDirection = inverse * (lower.position - upper.position);
                 lowerDirection = inverse * (end.position - lower.position);
                 upperLength = upperDirection.magnitude;
-                lowerLength = lowerDirection.magnitude;
                 if (leg)
                 {
                     upperRotation = inverse * upper.rotation;
@@ -146,22 +150,29 @@ namespace Blacktheon.BodyTracking.Demo
                 }
                 else
                 {
-                    elbowPole = new Vector3(left ? -1 : 1, -0.65f, -0.5f);
-                    Vector3 hinge = Vector3.Cross(upperDirection.normalized, lowerDirection.normalized);
-                    if (hinge.sqrMagnitude < 0.0001f)
-                        hinge = Vector3.Cross(ArmBend(upperDirection.normalized, elbowPole, Vector3.forward), upperDirection);
-                    upperRotation = Quaternion.Inverse(Quaternion.LookRotation(upperDirection, hinge)) * inverse * upper.rotation;
-                    lowerRotation = Quaternion.Inverse(Quaternion.LookRotation(lowerDirection, hinge)) * inverse * lower.rotation;
-
                     Vector3 fingers = tip != null ? tip.position - end.position : Vector3.zero;
                     if (fingers.sqrMagnitude < 0.000001f) fingers = end.position - lower.position;
                     Vector3 thumbSide = index && pinky ? Vector3.ProjectOnPlane(index.position - pinky.position, fingers) : Vector3.zero;
                     bool hasPalm = tip && thumbSide.sqrMagnitude > 0.000001f;
                     Quaternion palm = Quaternion.LookRotation(fingers, hasPalm ? thumbSide : model.up);
                     endRotation = Quaternion.Inverse(palm) * end.rotation;
-                    // The grip sits halfway from wrist to middle knuckle. Rigs without knuckles use a point wrist.
-                    if (hasPalm) targetOffset = Quaternion.Inverse(palm) * ((end.position - tip.position) * 0.5f);
+                    if (hasPalm)
+                    {
+                        Vector3 heel = Vector3.Lerp(end.position, tip.position, PalmHeelFraction);
+                        Vector3 grip = (end.position + tip.position) * 0.5f;
+                        lowerDirection = inverse * (heel - lower.position);
+                        targetOffset = Quaternion.Inverse(palm) * (heel - grip);
+                        heelToHandBone = Quaternion.Inverse(palm) * (end.position - heel);
+                        cuffToHeel = end.InverseTransformPoint(heel);
+                    }
+                    elbowPole = new Vector3(left ? -1 : 1, -0.65f, -0.5f);
+                    Vector3 hinge = Vector3.Cross(upperDirection.normalized, lowerDirection.normalized);
+                    if (hinge.sqrMagnitude < 0.0001f)
+                        hinge = Vector3.Cross(ArmBend(upperDirection.normalized, elbowPole, Vector3.forward), upperDirection);
+                    upperRotation = Quaternion.Inverse(Quaternion.LookRotation(upperDirection, hinge)) * inverse * upper.rotation;
+                    lowerRotation = Quaternion.Inverse(Quaternion.LookRotation(lowerDirection, hinge)) * inverse * lower.rotation;
                 }
+                lowerLength = lowerDirection.magnitude;
             }
 
             static Vector3 ArmBend(Vector3 axis, Vector3 pole, Vector3 fallback)
@@ -223,8 +234,8 @@ namespace Blacktheon.BodyTracking.Demo
                     upper.rotation = Quaternion.LookRotation(joint - start, hinge) * upperRotation;
                     lower.SetPositionAndRotation(joint, Quaternion.LookRotation(goal - joint, hinge) * lowerRotation);
                 }
-                end.SetPositionAndRotation(goal, target.rotation * endRotation);
-                if (cuff) cuff.localPosition = end.localPosition;
+                end.SetPositionAndRotation(goal + target.rotation * heelToHandBone, target.rotation * endRotation);
+                if (cuff) cuff.position = goal - cuff.TransformVector(cuffToHeel);
             }
         }
     }
