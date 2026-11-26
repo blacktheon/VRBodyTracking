@@ -19,6 +19,24 @@ namespace Blacktheon.BodyTracking.Demo
         internal bool RightGrip { get; private set; }
         bool wasConfirm, wasCalibrate, wasBack, holdingStick;
 
+        internal static bool TryReadPalm(bool left, out Pose palm)
+        {
+            var controller = left ? XRController.leftHand : XRController.rightHand;
+            const InputTrackingState required = InputTrackingState.Position | InputTrackingState.Rotation;
+            if (controller == null || !controller.isTracked.isPressed ||
+                ((InputTrackingState)controller.trackingState.ReadValue() & required) != required)
+            {
+                palm = default;
+                return false;
+            }
+
+            // In a Unity OpenXR grip, +Z runs from little finger to index, and -Y runs along the open fingers.
+            // The avatar palm's +Z runs along the fingers, with +Y toward the index knuckle on both hands.
+            palm = new Pose(controller.devicePosition.ReadValue(),
+                controller.deviceRotation.ReadValue() * Quaternion.Euler(90, 0, 0));
+            return true;
+        }
+
         internal void Read()
         {
             var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);

@@ -22,7 +22,7 @@ namespace Blacktheon.BodyTracking.Demo
         QuestPanel panel;
         readonly DemoControls controls = new();
         BodyTrackingClient tracking;
-        Transform origin, rig, head, leftHand, rightHand;
+        Transform origin, rig, head, leftHand, rightHand, leftPalm, rightPalm;
         readonly SeatAvatar[] remote = new SeatAvatar[3], local = new SeatAvatar[3];
         SolvedSkeleton skeleton;
         DemoChoices choices;
@@ -80,6 +80,10 @@ namespace Blacktheon.BodyTracking.Demo
             rig = origin.parent;
             leftHand = origin.Find("LeftHandAnchor");
             rightHand = origin.Find("RightHandAnchor");
+            leftPalm = new GameObject("Left palm target").transform;
+            rightPalm = new GameObject("Right palm target").transform;
+            leftPalm.SetParent(origin, false);
+            rightPalm.SetParent(origin, false);
             var camera = head.GetComponent<Camera>();
             if (camera != null)
             {
@@ -202,7 +206,9 @@ namespace Blacktheon.BodyTracking.Demo
                 bool hasRight = TryGetLift(false, out float right);
                 byte fresh = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0));
                 bool wasOnRoof = climber?.OnRoof == true;
-                climber?.Tick(rig, head, TrackedHand(leftHand), TrackedHand(rightHand), controls.LeftGrip,
+                Transform leftTarget = TrackedHand(true, leftPalm, leftHand);
+                Transform rightTarget = TrackedHand(false, rightPalm, rightHand);
+                climber?.Tick(rig, head, leftTarget, rightTarget, controls.LeftGrip,
                     controls.RightGrip, fresh, left, right, playing, now);
                 if (!wasOnRoof && climber?.OnRoof == true && sitting)
                 {
@@ -213,7 +219,7 @@ namespace Blacktheon.BodyTracking.Demo
                 // Compute joint poses after climbing moves the rig. The tablet receives this same frame.
                 Vector3 floor = rig.TransformPoint(chairInRig);
                 floor.y = climber?.PlatformHeight ?? 0f;
-                var pose = PlayerPose(floor, left, right, fresh);
+                var pose = PlayerPose(floor, left, right, fresh, leftTarget, rightTarget);
                 climber?.ApplyPose(ref pose, left, right);
                 cableMission?.Tick(floor, fresh, left, right, playing && climber?.Holding != true && climber?.OnRoof != true, now,
                     climber?.Feedback ?? LadderResult.None);
@@ -252,16 +258,23 @@ namespace Blacktheon.BodyTracking.Demo
         bool TryGetLift(bool left, out float lift) => choices.Solo
             ? skeleton.TryGetFootLift(left, out lift) : tracking.TryGetFootLift(left, out lift);
 
-        Transform TrackedHand(Transform anchor) =>
-            anchor != null && anchor.position.y > origin.position.y + 0.08f ? anchor : null;
+        Transform TrackedHand(bool left, Transform palm, Transform anchor)
+        {
+            if (DemoControls.TryReadPalm(left, out var grip))
+            {
+                palm.SetLocalPositionAndRotation(grip.position, grip.rotation);
+                return palm;
+            }
+            return anchor != null && anchor.position.y > origin.position.y + 0.08f ? anchor : null;
+        }
 
-        AvatarPose PlayerPose(Vector3 floor, float left, float right, byte fresh)
+        AvatarPose PlayerPose(Vector3 floor, float left, float right, byte fresh, Transform leftTarget, Transform rightTarget)
         {
             return new AvatarPose
             {
                 Slot = (byte)choices.Slot, Model = choices.Model, FreshFeet = fresh,
                 Head = new Pose(head.position, head.rotation),
-                LeftHand = Hand(leftHand, true), RightHand = Hand(rightHand, false),
+                LeftHand = Hand(leftTarget, true), RightHand = Hand(rightTarget, false),
                 LeftFoot = SeatedMotion.Foot(floor, body, true, left, sitting),
                 RightFoot = SeatedMotion.Foot(floor, body, false, right, sitting)
             };
@@ -269,7 +282,7 @@ namespace Blacktheon.BodyTracking.Demo
 
         Pose Hand(Transform anchor, bool left)
         {
-            if (TrackedHand(anchor) != null)
+            if (anchor != null)
                 return new Pose(anchor.position, anchor.rotation);
             return new Pose(head.position + body * new Vector3(left ? -0.28f : 0.28f, -0.37f, 0.25f), body);
         }
@@ -314,6 +327,8 @@ namespace Blacktheon.BodyTracking.Demo
 
         void OnDestroy()
         {
+            if (leftPalm) Destroy(leftPalm.gameObject);
+            if (rightPalm) Destroy(rightPalm.gameObject);
             relay?.Dispose();
             if (session != null)
             {

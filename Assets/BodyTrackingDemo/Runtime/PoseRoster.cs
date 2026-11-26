@@ -31,6 +31,7 @@ namespace Blacktheon.BodyTracking.Demo
         internal byte Slot;
         internal byte FreshFeet; // bit 0 is the left shoe, bit 1 the right shoe.
         internal SoldierModel Model;
+        // Hand positions are grip centers. Palm +Z points along the fingers and +Y toward the index knuckle.
         internal Pose Head, LeftHand, RightHand, LeftFoot, RightFoot;
         internal ClimbSnapshot Climb;
 

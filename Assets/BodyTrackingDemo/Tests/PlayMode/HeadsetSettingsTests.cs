@@ -12,7 +12,45 @@ namespace Blacktheon.BodyTracking.Demo.Tests
     public class HeadsetSettingsTests
     {
         static readonly int[] PlayerRoles = { 1, 0 };
+        static readonly bool[] Hands = { true, false };
         const string TouchLayout = "BodyTrackingTestTouch";
+
+        [UnityTest]
+        public IEnumerator TrackedTouchGripDefinesThePalmCenterAndThumbSide([ValueSource(nameof(Hands))] bool left)
+        {
+            var controller = InputSystem.AddDevice<UnityEngine.InputSystem.XR.XRController>();
+            try
+            {
+                InputSystem.SetDeviceUsage(controller, left ? CommonUsages.LeftHand : CommonUsages.RightHand);
+                var position = new Vector3(left ? -0.3f : 0.3f, 1.23f, 0.38f);
+                var rotation = Quaternion.Euler(32, -61, 19);
+                IEnumerator Track(UnityEngine.XR.InputTrackingState flags)
+                {
+                    using (StateEvent.From(controller, out var state))
+                    {
+                        controller.isTracked.WriteValueIntoEvent(1f, state);
+                        controller.trackingState.WriteValueIntoEvent((int)flags, state);
+                        controller.devicePosition.WriteValueIntoEvent(position, state);
+                        controller.deviceRotation.WriteValueIntoEvent(rotation, state);
+                        InputSystem.QueueEvent(state);
+                    }
+                    yield return null;
+                    yield return null;
+                    Assert.That(controller.trackingState.ReadValue(), Is.EqualTo((int)flags), "tracking-state event");
+                    Assert.That(controller.isTracked.isPressed, Is.True, "tracked flag");
+                }
+                yield return Track(UnityEngine.XR.InputTrackingState.Position | UnityEngine.XR.InputTrackingState.Rotation);
+                Assert.That(left ? UnityEngine.InputSystem.XR.XRController.leftHand : UnityEngine.InputSystem.XR.XRController.rightHand,
+                    Is.SameAs(controller), "handed controller");
+                Assert.That(DemoControls.TryReadPalm(left, out var palm), Is.True);
+                Assert.That(Vector3.Distance(palm.position, position), Is.LessThan(0.0001f));
+                Assert.That(Vector3.Angle(palm.rotation * Vector3.forward, rotation * Vector3.down), Is.LessThan(0.1f));
+                Assert.That(Vector3.Angle(palm.rotation * Vector3.up, rotation * Vector3.forward), Is.LessThan(0.1f));
+                yield return Track(UnityEngine.XR.InputTrackingState.Rotation);
+                Assert.That(DemoControls.TryReadPalm(left, out _), Is.False);
+            }
+            finally { InputSystem.RemoveDevice(controller); }
+        }
 
         [UnityTest]
         public IEnumerator EachSideGripStaysHeldUntilItsOwnControllerReleases()
