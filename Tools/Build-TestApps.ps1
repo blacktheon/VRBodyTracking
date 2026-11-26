@@ -57,6 +57,9 @@ function Confirm-Apk([string]$Path, [string]$Variant) {
     $expected = "package: name='com.blacktheon.bodytracking." + $Variant.ToLowerInvariant() + "'"
     if ($LASTEXITCODE -ne 0 -or !$info.Contains($expected) -or !$info.Contains("native-code: 'arm64-v8a'") -or
         !$info.Contains("uses-permission: name='android.permission.INTERNET'")) { throw "Invalid $Variant APK identity, ABI or network permission." }
+    if ($Variant -eq 'Quest' -and !$info.Contains("uses-permission: name='android.permission.CHANGE_WIFI_MULTICAST_STATE'")) {
+        throw 'The Quest APK is missing permission to receive SlimeVR discovery broadcasts.'
+    }
     $xml = (& $aapt dump xmltree $Path AndroidManifest.xml) -join "`n"
     if ($LASTEXITCODE -ne 0 -or ($xml.Contains('com.oculus.intent.category.VR') -ne ($Variant -eq 'Quest')) -or
         (($info -match "uses-feature: name='android.hardware.vr.headtracking'") -ne ($Variant -eq 'Quest'))) {
@@ -65,9 +68,13 @@ function Confirm-Apk([string]$Path, [string]$Variant) {
     Write-Output "Verified $Path"
 }
 
-$variants = if ($Role -eq 'Both') { @('Quest', 'Tablet') } else { @($Role) }
+$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+$layout = $null
+if ($Role -ne 'Quest') {
+    $layout = [IO.Directory]::CreateDirectory((Join-Path $tempRoot ('bodytracking-layout-' + [guid]::NewGuid().ToString('N')))).FullName
+}
+$variants = switch ($Role) { 'Both' { 'Quest'; 'Tablet' } 'Tablet' { 'Layout'; 'Tablet' } 'Quest' { 'Quest' } }
 foreach ($variant in $variants) {
-    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
     $stage = [IO.Directory]::CreateDirectory((Join-Path $tempRoot ('bodytracking-' + [guid]::NewGuid().ToString('N').Substring(0, 10)))).FullName
     $log = Join-Path $output "BodyTracking-$variant-build.log"
     $apk = Join-Path $output "BodyTracking-$variant.apk"
@@ -75,6 +82,16 @@ foreach ($variant in $variants) {
     try {
         if ($variant -eq 'Tablet') {
             New-TabletProject $stage
+            $layoutAssets = Join-Path $layout 'Assets'
+            if (!(Test-Path -LiteralPath (Join-Path $layoutAssets 'BodyTrackingDemo/Runtime/VehicleLadder.prefab'))) {
+                throw "Missing exported tablet ladder in $layout."
+            }
+            foreach ($file in Get-ChildItem -LiteralPath $layoutAssets -File -Recurse) {
+                $relative = $file.FullName.Substring($layout.Length + 1)
+                $target = Join-Path $stage $relative
+                $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+            }
         } else {
             foreach ($dir in 'Assets', 'Packages', 'ProjectSettings') { Copy-FromProject $dir $stage }
             # The editor Assistant starts its network relay even in batch mode.
@@ -91,9 +108,14 @@ foreach ($variant in $variants) {
         }
         [IO.File]::WriteAllText((Join-Path $stage '.bodytracking-build-stage'), $variant)
         $argsLine = '-batchmode -nographics -quit -buildTarget Android -projectPath "{0}" -executeMethod Blacktheon.BodyTracking.Demo.Editor.BodyTrackingBuild.Build{1} -bodyTrackingOutput "{2}" -logFile "{3}"' -f $stage,$variant,$apk,$log
+        if ($variant -eq 'Layout') {
+            $argsLine = '-batchmode -nographics -quit -buildTarget Android -projectPath "{0}" -executeMethod Blacktheon.BodyTracking.Demo.Editor.ClimbTabletExport.Export -bodyTrackingTabletAssets "{1}" -logFile "{2}"' -f $stage,$layout,$log
+        } elseif ($variant -eq 'Quest' -and $layout) {
+            $argsLine += ' -bodyTrackingTabletAssets "{0}"' -f $layout
+        }
         $process = Start-Process -FilePath $editor -ArgumentList $argsLine -WindowStyle Hidden -Wait -PassThru
         if ($process.ExitCode -ne 0) { throw "Unity exited with $($process.ExitCode). See $log." }
-        Confirm-Apk $apk $variant
+        if ($variant -ne 'Layout') { Confirm-Apk $apk $variant }
         $complete = $true
     } finally {
         if ($complete -and !$KeepStage -and
@@ -101,5 +123,11 @@ foreach ($variant in $variants) {
             (Split-Path -Leaf $stage) -match '^bodytracking-[0-9a-f]{10}$') {
             Remove-Item -LiteralPath $stage -Recurse -Force
         } else { Write-Output "Build project at $stage" }
+    }
+}
+if ($layout -and !$KeepStage) {
+    $actual = (Resolve-Path -LiteralPath $layout).Path
+    if ((Split-Path -Parent $actual) -ieq $tempRoot -and (Split-Path -Leaf $actual) -match '^bodytracking-layout-[0-9a-f]{32}$') {
+        Remove-Item -LiteralPath $actual -Recurse -Force
     }
 }

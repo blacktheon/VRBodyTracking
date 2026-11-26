@@ -30,6 +30,12 @@ namespace Blacktheon.BodyTracking.Demo.Editor
 
             bool tablet = role == "Tablet";
             string output = Path.GetFullPath(args[index + 1]);
+            int layout = Array.IndexOf(args, "-bodyTrackingTabletAssets");
+            if (!tablet && layout >= 0)
+            {
+                if (layout + 1 >= args.Length) throw new BuildFailedException("Missing tablet layout export directory.");
+                ClimbTabletExport.ExportTo(args[layout + 1]);
+            }
             string scene = tablet ? "Assets/BodyTrackingDemo/Scenes/Tablet.unity" : "Assets/BodyTrackingDemo/Scenes/StepOverCable.unity";
             if (AssetDatabase.LoadAssetAtPath<SceneAsset>(scene) == null)
                 throw new BuildFailedException($"Missing demo scene {scene}.");
@@ -39,6 +45,10 @@ namespace Blacktheon.BodyTracking.Demo.Editor
                 throw new BuildFailedException($"The {role} scene needs a demo component configured for that device.");
             if (new SerializedObject(demo).FindProperty("cableMission").objectReferenceValue == null)
                 throw new BuildFailedException($"The {role} scene needs its floor cable.");
+            var ladders = roots.SelectMany(go => go.GetComponentsInChildren<ClimbLadder>()).ToArray();
+            if (ladders.Length != 1 || ladders[0].RungCount == 0 || !ladders[0].VehicleRoot
+                || !ladders[0].LadderRoot || !ladders[0].TopBar)
+                throw new BuildFailedException($"The {role} scene needs one complete vehicle and ladder.");
             if (!tablet)
             {
                 var transforms = roots.SelectMany(go => go.GetComponentsInChildren<Transform>(true)).ToArray();

@@ -16,6 +16,9 @@ namespace Blacktheon.BodyTracking.Demo
         readonly Text address, network;
         readonly Text[] titles = new Text[3];
         readonly Text[] seats = new Text[3];
+        readonly Quaternion overviewRotation;
+        ClimbLadder ladder;
+        Vector3 vehicleCenter;
         string ip;
         double nextAddress;
 
@@ -31,6 +34,7 @@ namespace Blacktheon.BodyTracking.Demo
             camera.nearClipPlane = 0.1f;
             camera.transform.position = new Vector3(3.8f, 3.1f, 5.9f);
             camera.transform.LookAt(Vector3.up * 0.5f);
+            overviewRotation = camera.transform.rotation;
             var canvas = DemoUi.Canvas(parent, "Tablet dashboard", false);
             sidebar = (RectTransform)DemoUi.Block(canvas, "Status panel", 0, 0, 0, 0, DemoUi.Panel).transform;
             sidebar.anchorMin = Vector2.zero;
@@ -53,6 +57,17 @@ namespace Blacktheon.BodyTracking.Demo
             }
         }
 
+        internal void BindLadder(ClimbLadder layout)
+        {
+            ladder = layout;
+            if (layout == null || layout.VehicleRoot == null) return;
+            var vehicle = layout.VehicleRoot;
+            var bounds = new Bounds(vehicle.position, Vector3.zero);
+            foreach (var part in vehicle.GetComponentsInChildren<Renderer>())
+                if (part.enabled) bounds.Encapsulate(part.bounds);
+            vehicleCenter = vehicle.InverseTransformPoint(bounds.center);
+        }
+
         internal void Draw(PoseRoster roster, string status, int port, double now)
         {
             content.localScale = Vector3.one * Mathf.Min(sidebar.rect.width / 350f, sidebar.rect.height / 595f);
@@ -69,7 +84,7 @@ namespace Blacktheon.BodyTracking.Demo
             {
                 bool occupied = roster.TryGet(i + 1, out _, out AvatarPose pose);
                 titles[i].text = "Seat " + (i + 1) + (occupied ? "   ·   " + pose.Model : "");
-                seats[i].text = occupied ? "L  " + Lift(pose, true) + "     R  " + Lift(pose, false) : "Waiting for headset";
+                seats[i].text = occupied ? Motion(pose) : "Waiting for headset";
             }
         }
 
@@ -79,6 +94,18 @@ namespace Blacktheon.BodyTracking.Demo
             float aspect = Mathf.Max(0.15f, camera.aspect);
             Vector3 focus = Vector3.up * 0.5f;
             float size = Mathf.Max(3.8f, 5.3f / aspect);
+            bool frameLadder = false;
+            if (ladder != null && ladder.RungCount > 0)
+                for (int slot = 1; slot <= 3; slot++)
+                    if (roster.TryGet(slot, out _, out var pose) && pose.Climb.Active) { frameLadder = true; break; }
+            view.rotation = overviewRotation;
+            if (frameLadder)
+            {
+                // Look from the climber's side, including when the tablet rotates the ladder.
+                var inward = Vector3.ProjectOnPlane(ladder.FaceDirection, Vector3.up).normalized;
+                if (inward.sqrMagnitude > 0.5f)
+                    view.rotation = Quaternion.LookRotation(inward - Vector3.Cross(Vector3.up, inward) * 0.65f + Vector3.down * 0.45f);
+            }
             if (roster.Count > 0)
             {
                 Quaternion toView = Quaternion.Inverse(view.rotation);
@@ -93,6 +120,19 @@ namespace Blacktheon.BodyTracking.Demo
                     group.Encapsulate(toView * pose.RightHand.position);
                     group.Encapsulate(toView * pose.LeftFoot.position);
                     group.Encapsulate(toView * pose.RightFoot.position);
+                }
+                if (frameLadder)
+                {
+                    group.Encapsulate(toView * ladder.RungPoint(0, true));
+                    group.Encapsulate(toView * ladder.RungPoint(0, false));
+                    group.Encapsulate(toView * ladder.RungPoint(ladder.RungCount, true));
+                    group.Encapsulate(toView * ladder.RungPoint(ladder.RungCount, false));
+                    if (ladder.TopBar != null) group.Encapsulate(toView * ladder.TopBar.position);
+                    if (ladder.VehicleRoot != null)
+                    {
+                        group.Encapsulate(toView * ladder.VehicleRoot.position);
+                        group.Encapsulate(toView * ladder.VehicleRoot.TransformPoint(vehicleCenter));
+                    }
                 }
                 focus = view.rotation * group.center;
                 size = Mathf.Max(1.22f, Mathf.Max(group.extents.y + 0.46f, (group.extents.x + 0.55f) / aspect));
@@ -134,10 +174,30 @@ namespace Blacktheon.BodyTracking.Demo
             return type == NetworkInterfaceType.Ethernet ? 2 : -1;
         }
 
+        internal static string Motion(AvatarPose pose)
+        {
+            var climb = pose.Climb;
+            if (!climb.Active) return "L  " + Lift(pose, true) + "     R  " + Lift(pose, false);
+            if (climb.OnRoof) return climb.Feedback == ClimbFeedback.Legal ? "On roof   ·   Legal" : "On roof";
+            string feedback = climb.Feedback == ClimbFeedback.Fell ? "Fell" : climb.Feedback == ClimbFeedback.Legal ? "Legal" : "Climbing";
+            string Hand(byte rung) => rung == 0 ? "–" : rung.ToString();
+            string Foot(byte rung) => rung == 0 ? "floor" : rung.ToString();
+            return $"Hands  L {Hand(climb.LeftHand)}  R {Hand(climb.RightHand)}   ·   {feedback}\n" +
+                $"Feet     L {Foot(climb.LeftFoot)}  R {Foot(climb.RightFoot)}";
+        }
+
         internal static string Lift(AvatarPose pose, bool left)
         {
+            if (pose.Climb.OnRoof) return "roof";
+            if (pose.Climb.Active)
+            {
+                byte rung = left ? pose.Climb.LeftFoot : pose.Climb.RightFoot;
+                return rung == 0 ? "floor" : "rung " + rung;
+            }
             if ((pose.FreshFeet & (left ? 1 : 2)) == 0) return "no data";
             float height = (left ? pose.LeftFoot : pose.RightFoot).position.y - SeatedMotion.ShoeCenterHeight;
+            // A high world pose can arrive before its separate reliable grip update.
+            if (height > 0.651f) return "–";
             return Mathf.Max(0, Mathf.RoundToInt(height * 100)) + " cm";
         }
     }

@@ -8,7 +8,7 @@ namespace Blacktheon.BodyTracking.Demo
         readonly CableCrossing crossing = new();
         MeshRenderer overlay;
         Material tint;
-        CableResult shown;
+        CableResult cableResult, shown;
 
         internal void BeginLocal(Transform head)
         {
@@ -30,13 +30,16 @@ namespace Blacktheon.BodyTracking.Demo
 
         internal void ResetApproach() => crossing.ResetApproach();
 
-        internal void Tick(Vector3 floor, byte freshFeet, float left, float right, bool playing, double now)
+        internal void Tick(Vector3 floor, byte freshFeet, float left, float right, bool playing, double now,
+            LadderResult ladderFeedback = LadderResult.None)
         {
             if (overlay == null) return;
             if (!playing) crossing.ResetApproach();
             Vector3 local = transform.InverseTransformPoint(floor);
-            var next = playing ? crossing.Sample(new Vector2(local.x, local.z), freshFeet, left, right, now)
-                               : crossing.Feedback(now);
+            cableResult = playing ? crossing.Sample(new Vector2(local.x, local.z), freshFeet, left, right, now)
+                                  : crossing.Feedback(now);
+            var next = ladderFeedback == LadderResult.Fell ? CableResult.Missed :
+                ladderFeedback == LadderResult.Legal ? CableResult.Passed : cableResult;
             if (next == shown) return;
             shown = next;
             overlay.enabled = shown != CableResult.None;
@@ -48,8 +51,8 @@ namespace Blacktheon.BodyTracking.Demo
         {
             get
             {
-                if (shown == CableResult.Passed) return "Cable cleared";
-                if (shown == CableResult.Missed) return "Cable missed";
+                if (cableResult == CableResult.Passed) return "Cable cleared";
+                if (cableResult == CableResult.Missed) return "Cable missed";
                 return crossing.LiftedFeet switch
                 {
                     1 => "Left counted. Lift your right foot.",

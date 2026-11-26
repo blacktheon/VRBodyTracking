@@ -9,23 +9,49 @@ namespace Blacktheon.BodyTracking.Demo
         Armored
     }
 
+    internal enum ClimbFeedback : byte { None, Legal, Fell }
+
+    internal struct ClimbSnapshot : IEquatable<ClimbSnapshot>
+    {
+        // Positive values address rungs from the bottom. Zero means a free hand or the floor.
+        internal byte LeftHand, RightHand, LeftFoot, RightFoot;
+        internal ClimbFeedback Feedback;
+        internal bool OnRoof;
+        internal bool Active => OnRoof || LeftHand != 0 || RightHand != 0 || LeftFoot != 0 || RightFoot != 0 || Feedback != ClimbFeedback.None;
+
+        internal bool IsValid(int rungCount) => (byte)Feedback <= (byte)ClimbFeedback.Fell &&
+            LeftHand <= rungCount && RightHand <= rungCount && LeftFoot <= rungCount && RightFoot <= rungCount;
+
+        public bool Equals(ClimbSnapshot other) => LeftHand == other.LeftHand && RightHand == other.RightHand &&
+            LeftFoot == other.LeftFoot && RightFoot == other.RightFoot && Feedback == other.Feedback && OnRoof == other.OnRoof;
+    }
+
     internal struct AvatarPose
     {
         internal byte Slot;
         internal byte FreshFeet; // bit 0 is the left shoe, bit 1 the right shoe.
         internal SoldierModel Model;
         internal Pose Head, LeftHand, RightHand, LeftFoot, RightFoot;
+        internal ClimbSnapshot Climb;
 
         internal bool IsValid => Slot >= 1 && Slot <= 3 && FreshFeet <= 3
             && (Model == SoldierModel.Uniform || Model == SoldierModel.Armored)
             && Valid(Head) && Valid(LeftHand) && Valid(RightHand) && Valid(LeftFoot) && Valid(RightFoot);
 
+        // Earlier clients validate every joint before accepting any part of the room.
+        internal bool FitsLegacyHeight => Head.position.y <= 4 && LeftHand.position.y <= 4 && RightHand.position.y <= 4
+            && LeftFoot.position.y <= 4 && RightFoot.position.y <= 4;
+
         static bool Valid(Pose pose)
         {
             Vector3 p = pose.position;
-            float length = Quaternion.Dot(pose.rotation, pose.rotation);
-            return Mathf.Abs(p.x) <= 7 && Mathf.Abs(p.z) <= 7 && p.y >= -0.5f && p.y <= 4
-                && length >= 0.98f && length <= 1.02f;
+            return Mathf.Abs(p.x) <= 7 && Mathf.Abs(p.z) <= 7 && p.y >= -0.5f && p.y <= 7 && ValidRotation(pose.rotation);
+        }
+
+        internal static bool ValidRotation(Quaternion rotation)
+        {
+            float length = Quaternion.Dot(rotation, rotation);
+            return length >= 0.98f && length <= 1.02f;
         }
     }
 
@@ -78,6 +104,12 @@ namespace Blacktheon.BodyTracking.Demo
                     entries[i].Pose.Model = model;
                     return;
                 }
+        }
+
+        internal void SetClimb(int slot, ulong owner, ClimbSnapshot climb)
+        {
+            if (TryGet(slot, out ulong current, out _) && current == owner)
+                entries[slot - 1].Pose.Climb = climb;
         }
 
         internal void Expire(double now)

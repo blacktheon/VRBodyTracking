@@ -15,6 +15,16 @@ namespace Blacktheon.BodyTracking.Demo
         internal int Slot => Mathf.Max(1, Role);
         internal string Label => Solo ? "Six trackers / solo" : "Paired feet / seat " + Slot;
         internal static bool Saved => PlayerPrefs.HasKey(Pref + "role");
+        // Older builds saved the manually entered PC here. Use it as a discovery hint on upgrade.
+        internal static string LastTrackingPc
+        {
+            get => PlayerPrefs.GetString(Pref + "pc", "");
+            set
+            {
+                PlayerPrefs.SetString(Pref + "pc", value);
+                PlayerPrefs.Save();
+            }
+        }
         // Existing installations and older network peers used armor only for seat two.
         internal static SoldierModel LegacyModel(int slot) => slot == 2 ? SoldierModel.Armored : SoldierModel.Uniform;
 
@@ -25,7 +35,7 @@ namespace Blacktheon.BodyTracking.Demo
             return new DemoChoices
             {
                 Role = role, Model = model == (int)SoldierModel.Armored ? SoldierModel.Armored : SoldierModel.Uniform,
-                Pc = PlayerPrefs.GetString(Pref + "pc", ""), Tablet = PlayerPrefs.GetString(Pref + "tablet", "")
+                Pc = PlayerPrefs.GetString(Pref + "pcOverride", ""), Tablet = PlayerPrefs.GetString(Pref + "tablet", "")
             };
         }
 
@@ -33,7 +43,7 @@ namespace Blacktheon.BodyTracking.Demo
         {
             PlayerPrefs.SetInt(Pref + "role", Role);
             PlayerPrefs.SetInt(Pref + "model", (int)Model);
-            PlayerPrefs.SetString(Pref + "pc", Pc);
+            PlayerPrefs.SetString(Pref + "pcOverride", Pc);
             PlayerPrefs.SetString(Pref + "tablet", Tablet);
             PlayerPrefs.Save();
         }
@@ -148,7 +158,7 @@ namespace Blacktheon.BodyTracking.Demo
             }
             hint = DemoUi.Label(menu, "Controls", 30, 457, 660, 89, 23, DemoUi.Accent);
             hud = DemoUi.Canvas(parent, "Tracking status", true);
-            int hudHeight = cableMission ? 202 : 170;
+            int hudHeight = cableMission ? 270 : 198;
             hud.sizeDelta = new Vector2(670, hudHeight);
             hud.localScale = Vector3.one * 0.0015f;
             DemoUi.Block(hud, "Background", 0, 0, 670, hudHeight, DemoUi.Panel);
@@ -229,7 +239,11 @@ namespace Blacktheon.BodyTracking.Demo
             {
                 case "Delete": if (buffer.Length > 0) buffer = buffer.Substring(0, buffer.Length - 1); break;
                 case "Clear": buffer = ""; break;
-                case "Auto": if (editing == 2) { draft.Tablet = ""; editing = 0; } break;
+                case "Auto":
+                    if (editing == 1) draft.Pc = "";
+                    else draft.Tablet = "";
+                    editing = 0;
+                    break;
                 case "Back": editing = 0; break;
                 case "Save":
                     string address = "";
@@ -262,8 +276,7 @@ namespace Blacktheon.BodyTracking.Demo
             if (keypad)
             {
                 title.text = editing == 1 ? "Tracking PC address" : "Tablet address";
-                detail.text = string.IsNullOrEmpty(buffer) ? "Enter IPv4 address" : buffer;
-                keys[11].text = editing == 2 ? "Auto" : "";
+                detail.text = string.IsNullOrEmpty(buffer) ? "Find on Wi-Fi or enter an IPv4 address" : buffer;
                 hint.text = error.Length > 0 ? error : "Left stick moves between keys. A presses a key.\nB cancels the address change.";
             }
             else
@@ -271,11 +284,11 @@ namespace Blacktheon.BodyTracking.Demo
                 title.text = "Seated body tracking";
                 detail.text = "Sit facing ahead with both feet resting on the floor.";
                 lines[0].text = "Mode      " + draft.Label;
-                lines[1].text = "Tracking PC      " + (draft.Pc.Length == 0 ? "Enter LAN address" : draft.Pc);
+                lines[1].text = "Tracking PC      " + (draft.Pc.Length == 0 ? "Find on Wi-Fi" : draft.Pc);
                 lines[2].text = "Tablet      " + (draft.Tablet.Length == 0 ? "Find on Wi-Fi" : draft.Tablet);
                 lines[3].text = "Soldier      " + draft.Model;
                 lines[4].text = draft.Solo ? "Start solo test" : "Enter multiplayer room";
-                hint.text = "Left stick selects. A selects or opens. B closes.\nIn the room, A sits or stands. X calibrates.";
+                hint.text = "Left stick selects. A selects or opens. B closes.\nA sits or stands. X calibrates. Side grips climb.";
             }
         }
     }

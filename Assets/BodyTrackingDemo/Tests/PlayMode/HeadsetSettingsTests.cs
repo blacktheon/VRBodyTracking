@@ -15,10 +15,50 @@ namespace Blacktheon.BodyTracking.Demo.Tests
         const string TouchLayout = "BodyTrackingTestTouch";
 
         [UnityTest]
+        public IEnumerator EachSideGripStaysHeldUntilItsOwnControllerReleases()
+        {
+            InputSystem.RegisterLayout(@"{""extend"":""XRController"",""controls"":[{""name"":""grip"",""layout"":""Axis""}]}", TouchLayout);
+            var left = InputSystem.AddDevice(TouchLayout);
+            var right = InputSystem.AddDevice(TouchLayout);
+            try
+            {
+                InputSystem.SetDeviceUsage(left, CommonUsages.LeftHand);
+                InputSystem.SetDeviceUsage(right, CommonUsages.RightHand);
+                var input = new DemoControls();
+                IEnumerator Grip(InputDevice controller, float pressure)
+                {
+                    QueueGrip(controller, pressure);
+                    yield return null;
+                    yield return null;
+                    Assert.That(controller.GetChildControl<AxisControl>("grip").ReadValue(), Is.EqualTo(pressure).Within(0.01f));
+                    input.Read();
+                }
+                yield return Grip(left, 0.86f);
+                Assert.That(input.LeftGrip, Is.True);
+                Assert.That(input.RightGrip, Is.False);
+                yield return Grip(right, 1f);
+                yield return Grip(left, 0.48f);
+                Assert.That(input.LeftGrip && input.RightGrip, Is.True, "a partially relaxed grip stays attached");
+                yield return Grip(left, 0.1f);
+                Assert.That(input.LeftGrip, Is.False);
+                Assert.That(input.RightGrip, Is.True);
+                yield return Grip(right, 0f);
+                Assert.That(input.RightGrip, Is.False);
+            }
+            finally
+            {
+                InputSystem.RemoveDevice(left);
+                InputSystem.RemoveDevice(right);
+                InputSystem.RemoveLayout(TouchLayout);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator SeatedPlayerCanTogglePostureAndMoveWithoutLiftingEitherShoe([ValueSource(nameof(PlayerRoles))] int role)
         {
             DemoChoices previous = DemoChoices.Load();
             bool hadChoices = DemoChoices.Saved;
+            bool hadOverride = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.pcOverride");
             bool hadModel = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.model");
             var rig = new GameObject("Test camera rig");
             var space = new GameObject("TrackingSpace").transform;
@@ -42,7 +82,7 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 rightPad = InputSystem.AddDevice(TouchLayout);
                 InputSystem.SetDeviceUsage(leftPad, CommonUsages.LeftHand);
                 InputSystem.SetDeviceUsage(rightPad, CommonUsages.RightHand);
-                new DemoChoices { Role = role, Pc = "", Tablet = "127.0.0.1" }.Save();
+                new DemoChoices { Role = role, Pc = "127.0.0.1:1", Tablet = "127.0.0.1" }.Save();
                 demo.AddComponent<BodyTrackingDemo>();
                 yield return null;
                 yield return null;
@@ -147,20 +187,108 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 InputSystem.RemoveLayout(TouchLayout);
                 Object.Destroy(demo);
                 Object.Destroy(rig);
-                if (hadChoices)
-                {
-                    previous.Save();
-                    if (!hadModel)
-                    {
-                        PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.model");
-                        PlayerPrefs.Save();
-                    }
-                }
+                if (hadChoices) previous.Save();
                 else
                 {
-                    foreach (string key in new[] { "role", "pc", "tablet", "model" }) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo." + key);
-                    PlayerPrefs.Save();
+                    foreach (string key in new[] { "role", "pcOverride", "tablet", "model" }) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo." + key);
                 }
+                if (!hadModel) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.model");
+                if (!hadOverride) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.pcOverride");
+                PlayerPrefs.Save();
+            }
+        }
+
+#if UNITY_EDITOR
+        [UnityTest]
+        public IEnumerator TouchGripsMoveTheTrackedHeadAndShowTheClimbersOwnStepFeedback()
+        {
+            const string layoutPath = "Assets/BodyTrackingDemo/Runtime/VehicleLadder.prefab";
+            var saved = DemoChoices.Load();
+            bool hadChoices = DemoChoices.Saved;
+            bool hadOverride = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.pcOverride");
+            bool hadModel = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.model");
+            var vehicle = Object.Instantiate(UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(layoutPath));
+            var ladder = vehicle.GetComponent<ClimbLadder>();
+            var rig = new GameObject("Tracked headset");
+            Transform Anchor(string name, Transform parent)
+            {
+                var t = new GameObject(name).transform;
+                t.SetParent(parent, false);
+                return t;
+            }
+            var space = Anchor("TrackingSpace", rig.transform);
+            var head = Anchor("CenterEyeAnchor", space);
+            var left = Anchor("LeftHandAnchor", space);
+            var right = Anchor("RightHandAnchor", space);
+            head.localPosition = Vector3.up * 1.2f;
+            var host = new GameObject("Local player");
+            InputSystem.RegisterLayout(@"{""extend"":""XRController"",""controls"":[{""name"":""grip"",""layout"":""Axis""}]}", TouchLayout);
+            var l = InputSystem.AddDevice(TouchLayout);
+            var r = InputSystem.AddDevice(TouchLayout);
+            try
+            {
+                InputSystem.SetDeviceUsage(l, CommonUsages.LeftHand);
+                InputSystem.SetDeviceUsage(r, CommonUsages.RightHand);
+                new DemoChoices { Role = 0, Pc = "127.0.0.1:1", Tablet = "" }.Save();
+                var mission = host.AddComponent<StepOverCableMission>();
+                var component = new UnityEditor.SerializedObject(host.AddComponent<BodyTrackingDemo>());
+                component.FindProperty("cableMission").objectReferenceValue = mission;
+                component.ApplyModifiedPropertiesWithoutUndo();
+                yield return null;
+                yield return null;
+                float standing = head.position.y;
+                var tint = head.Find("Cable feedback").GetComponent<MeshRenderer>();
+                Assert.That(standing, Is.EqualTo(1.65f).Within(0.01f));
+                Vector3 approach = ladder.RungPoint(3, true) - ladder.FaceDirection * 0.40f;
+                rig.transform.position += Vector3.ProjectOnPlane(approach - head.position, Vector3.up);
+                IEnumerator Squeeze(InputDevice device, float pressure)
+                {
+                    QueueGrip(device, pressure);
+                    yield return null;
+                    yield return null;
+                }
+                left.position = ladder.RungPoint(3, true);
+                yield return Squeeze(l, 1);
+                left.localPosition -= Vector3.up * 0.18f;
+                yield return null;
+                yield return null;
+                Assert.That(head.position.y, Is.EqualTo(standing + 0.18f).Within(0.01f), "pulling the controller raises the eyes");
+                right.position = ladder.RungPoint(4, false);
+                yield return Squeeze(r, 1);
+                Assert.That(tint.enabled && tint.sharedMaterial.color.g > tint.sharedMaterial.color.r, Is.True, "first hand-step flashes green");
+                yield return Squeeze(l, 0);
+                left.position = ladder.RungPoint(5, true);
+                yield return Squeeze(l, 1);
+                yield return Squeeze(r, 0);
+                right.position = ladder.RungPoint(6, false);
+                yield return Squeeze(r, 1);
+                Assert.That(head.position.y, Is.EqualTo(standing).Within(0.01f), "third hand-step returns to the floor");
+                Assert.That(tint.enabled && tint.sharedMaterial.color.r > tint.sharedMaterial.color.g, Is.True, "the climber sees red");
+            }
+            finally
+            {
+                InputSystem.RemoveDevice(l);
+                InputSystem.RemoveDevice(r);
+                InputSystem.RemoveLayout(TouchLayout);
+                Object.Destroy(host);
+                Object.Destroy(rig);
+                Object.Destroy(vehicle);
+                if (hadChoices) saved.Save();
+                else
+                    foreach (string key in new[] { "role", "pcOverride", "tablet", "model" }) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo." + key);
+                if (!hadModel) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.model");
+                if (!hadOverride) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.pcOverride");
+                PlayerPrefs.Save();
+            }
+        }
+#endif
+
+        static void QueueGrip(InputDevice device, float pressure)
+        {
+            using (StateEvent.From(device, out var state))
+            {
+                device.GetChildControl<AxisControl>("grip").WriteValueIntoEvent(pressure, state);
+                InputSystem.QueueEvent(state);
             }
         }
 
@@ -231,6 +359,20 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 Assert.That(entered.Value.Pc, Is.EqualTo("1.0.0.1"));
                 Assert.That(entered.Value.Tablet, Is.Empty);
                 Assert.That(panel.Open, Is.False);
+
+                var saved = entered.Value;
+                saved.Tablet = "192.168.5.9";
+                entered = null;
+                panel.OpenSettings(saved, owner.transform);
+                Press(Key.DownArrow); Press(Key.Enter); // Tracking PC
+                Press(Key.LeftArrow); Press(Key.DownArrow); Press(Key.DownArrow); // Auto
+                Press(Key.Enter);
+                for (int i = 0; i < 3; i++) Press(Key.DownArrow);
+                Press(Key.Enter); // Enter multiplayer room
+                Assert.That(entered.HasValue, Is.True, "Auto closes the keypad and applies when entering the room");
+                Assert.That(entered.Value.Pc, Is.Empty);
+                Assert.That(entered.Value.Tablet, Is.EqualTo(saved.Tablet));
+                Assert.That(entered.Value.Role, Is.EqualTo(saved.Role));
             }
             finally
             {

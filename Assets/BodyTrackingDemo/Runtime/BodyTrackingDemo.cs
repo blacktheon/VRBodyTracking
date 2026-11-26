@@ -16,6 +16,8 @@ namespace Blacktheon.BodyTracking.Demo
         NetworkManager manager;
         VRNetSession session;
         PoseRelay relay;
+        ClimbLadder climbWorld;
+        LadderClimber climber;
         TabletPanel dashboard;
         QuestPanel panel;
         readonly DemoControls controls = new();
@@ -31,6 +33,7 @@ namespace Blacktheon.BodyTracking.Demo
         bool paused, focused = true;
         double nextStatus, calibrationNoticeUntil;
         string network = "Waiting for tablet";
+        string lastTrackingPc;
 
         void Start()
         {
@@ -48,10 +51,20 @@ namespace Blacktheon.BodyTracking.Demo
             session.Config.appVersion = "1";
             session.OnStatusChanged += RecordStatus;
             relay = new PoseRelay(manager);
+            foreach (var root in gameObject.scene.GetRootGameObjects())
+            {
+                var ladder = root.GetComponentInChildren<ClimbLadder>();
+                if (ladder == null || ladder.RungCount == 0) continue;
+                climbWorld = ladder;
+                relay.BindWorld(ladder.VehicleRoot, ladder.LadderRoot);
+                if (!tablet) climber = new LadderClimber(ladder);
+                break;
+            }
             if (tablet)
             {
                 Screen.sleepTimeout = SleepTimeout.NeverSleep;
                 dashboard = new TabletPanel(transform);
+                dashboard.BindLadder(climbWorld);
                 session.StartServer();
                 return;
             }
@@ -77,6 +90,7 @@ namespace Blacktheon.BodyTracking.Demo
             cableMission?.BeginLocal(head);
             panel = new QuestPanel(transform, Apply, cableMission != null);
             choices = DemoChoices.Load();
+            lastTrackingPc = DemoChoices.LastTrackingPc;
             if (DemoChoices.Saved) Apply(choices);
             else panel.OpenSettings(choices, head);
         }
@@ -88,7 +102,6 @@ namespace Blacktheon.BodyTracking.Demo
             cableMission?.ResetApproach();
             bool changeRoom = !configured || next.Role != choices.Role || next.Tablet != choices.Tablet;
             bool changeTracking = !configured || next.Role != choices.Role || next.Pc != choices.Pc;
-            bool changeModel = configured && next.Model != choices.Model;
             needsSeat |= !configured || next.Role != choices.Role;
             if (next.Role != choices.Role)
             {
@@ -98,18 +111,23 @@ namespace Blacktheon.BodyTracking.Demo
             choices = next;
             configured = true;
             choices.Save();
-            if (changeModel && !changeTracking && !changeRoom) return;
-            skeleton?.ResetFootReference();
-            tracking.Disconnect();
-            if (!string.IsNullOrEmpty(choices.Pc))
-                tracking.Connect(choices.Pc, choices.Slot, choices.Solo ? BodyTrackingMode.SixTrackers : BodyTrackingMode.PairedFeet, origin, head);
+            if (changeTracking)
+            {
+                climber?.ResetLocation(rig);
+                skeleton?.ResetFootReference();
+                var mode = choices.Solo ? BodyTrackingMode.SixTrackers : BodyTrackingMode.PairedFeet;
+                if (string.IsNullOrEmpty(choices.Pc))
+                    tracking.ConnectAuto(choices.Slot, mode, origin, head, lastTrackingPc);
+                else
+                    tracking.Connect(choices.Pc, choices.Slot, mode, origin, head);
+            }
 
+            if (!changeRoom && (choices.Solo || session.IsClientConnected)) return;
             if (choices.Solo)
             {
                 session.StopSession();
                 return;
             }
-            if (!changeRoom && session.IsClientConnected) return;
             session.StopSession();
             session.PlayerName = "Seat " + choices.Slot;
             session.GetComponent<ReconnectController>().Enabled = true; // retry initial discovery and direct-IP failures, too.
@@ -132,13 +150,14 @@ namespace Blacktheon.BodyTracking.Demo
             controls.Read();
             if (panel.Open) { panel.Handle(controls); return; }
             if (controls.Back) { panel.OpenSettings(choices, head); return; }
-            if (controls.Confirm)
+            if (controls.Confirm && climber?.Holding != true)
             {
                 sitting = !sitting;
                 if (!needsSeat) SetEyeHeight();
             }
             if (controls.Calibrate)
             {
+                climber?.Cancel(rig);
                 cableMission?.ResetApproach();
                 Vector3 forward = Vector3.ProjectOnPlane(head.forward, Vector3.up);
                 if (forward.sqrMagnitude > 0.01f) body = Quaternion.LookRotation(forward.normalized);
@@ -148,7 +167,8 @@ namespace Blacktheon.BodyTracking.Demo
                 calibrationNoticeUntil = Time.unscaledTimeAsDouble + 2;
             }
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.06f);
-            SeatedMotion.Move(rig, head, ref body, controls.Move, controls.Turn * 70 * dt, 1.15f * dt);
+            if (climber?.Holding != true)
+                SeatedMotion.Move(rig, head, ref body, controls.Move, controls.Turn * 70 * dt, 1.15f * dt);
         }
 
         void RememberChair()
@@ -160,7 +180,8 @@ namespace Blacktheon.BodyTracking.Demo
         {
             // Offset the entire tracked rig once. Physical head and hand movement remains one-to-one.
             Vector3 position = rig.position;
-            position.y = (sitting ? SeatedMotion.SittingEyeHeight : SeatedMotion.StandingEyeHeight) - neutralEyeInRig;
+            position.y = (climber?.PlatformHeight ?? 0f) +
+                (sitting ? SeatedMotion.SittingEyeHeight : SeatedMotion.StandingEyeHeight) - neutralEyeInRig;
             rig.position = position;
         }
 
@@ -168,21 +189,36 @@ namespace Blacktheon.BodyTracking.Demo
         {
             double now = Time.unscaledTimeAsDouble;
             AvatarPose? upload = null;
+            AvatarPose? localPose = null;
             if (!tablet && head != null)
             {
-                panel.Place(head, body);
                 if (choices.Solo)
                 {
                     skeleton ??= new SolvedSkeleton(room);
                     skeleton.Draw(tracking, head, body, origin.position.y);
                 }
-                // The calibrated chair follows joystick motion, independently of head lean and avatar posture.
-                Vector3 floor = rig.TransformPoint(chairInRig);
-                floor.y = 0;
-                var pose = PlayerPose(floor, out float left, out float right);
                 bool playing = configured && !needsSeat && !panel.Open && focused && !paused;
-                cableMission?.Tick(floor, pose.FreshFeet, left, right, playing, now);
+                bool hasLeft = TryGetLift(true, out float left);
+                bool hasRight = TryGetLift(false, out float right);
+                byte fresh = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0));
+                bool wasOnRoof = climber?.OnRoof == true;
+                climber?.Tick(rig, head, TrackedHand(leftHand), TrackedHand(rightHand), controls.LeftGrip,
+                    controls.RightGrip, fresh, left, right, playing, now);
+                if (!wasOnRoof && climber?.OnRoof == true && sitting)
+                {
+                    sitting = false;
+                    SetEyeHeight();
+                }
+                panel.Place(head, body);
+                // Compute joint poses after climbing moves the rig. The tablet receives this same frame.
+                Vector3 floor = rig.TransformPoint(chairInRig);
+                floor.y = climber?.PlatformHeight ?? 0f;
+                var pose = PlayerPose(floor, left, right, fresh);
+                climber?.ApplyPose(ref pose, left, right);
+                cableMission?.Tick(floor, fresh, left, right, playing && climber?.Holding != true && climber?.OnRoof != true, now,
+                    climber?.Feedback ?? LadderResult.None);
                 DrawAvatar(local, pose, true);
+                if (!needsSeat) localPose = pose;
                 if (!needsSeat && !choices.Solo) upload = pose;
             }
             relay.Tick(upload, now);
@@ -198,7 +234,7 @@ namespace Blacktheon.BodyTracking.Demo
             if (now < nextStatus) return;
             nextStatus = now + 0.15;
             if (tablet) dashboard.Draw(relay.Roster, network, session.Config.serverPort, now);
-            else if (head != null) UpdateHeadsetStatus(upload, now);
+            else if (head != null) UpdateHeadsetStatus(localPose, now);
         }
 
         void DrawAvatar(SeatAvatar[] views, AvatarPose pose, bool own)
@@ -216,32 +252,36 @@ namespace Blacktheon.BodyTracking.Demo
         bool TryGetLift(bool left, out float lift) => choices.Solo
             ? skeleton.TryGetFootLift(left, out lift) : tracking.TryGetFootLift(left, out lift);
 
-        AvatarPose PlayerPose(Vector3 floor, out float left, out float right)
+        Transform TrackedHand(Transform anchor) =>
+            anchor != null && anchor.position.y > origin.position.y + 0.08f ? anchor : null;
+
+        AvatarPose PlayerPose(Vector3 floor, float left, float right, byte fresh)
         {
-            bool hasLeft = TryGetLift(true, out left);
-            bool hasRight = TryGetLift(false, out right);
             return new AvatarPose
             {
-                Slot = (byte)choices.Slot, Model = choices.Model, FreshFeet = (byte)((hasLeft ? 1 : 0) | (hasRight ? 2 : 0)),
+                Slot = (byte)choices.Slot, Model = choices.Model, FreshFeet = fresh,
                 Head = new Pose(head.position, head.rotation),
                 LeftHand = Hand(leftHand, true), RightHand = Hand(rightHand, false),
-                LeftFoot = SeatedMotion.Foot(floor, body, true, hasLeft ? left : 0, sitting),
-                RightFoot = SeatedMotion.Foot(floor, body, false, hasRight ? right : 0, sitting)
+                LeftFoot = SeatedMotion.Foot(floor, body, true, left, sitting),
+                RightFoot = SeatedMotion.Foot(floor, body, false, right, sitting)
             };
         }
 
         Pose Hand(Transform anchor, bool left)
         {
-            if (anchor != null && anchor.position.y > origin.position.y + 0.08f)
+            if (TrackedHand(anchor) != null)
                 return new Pose(anchor.position, anchor.rotation);
             return new Pose(head.position + body * new Vector3(left ? -0.28f : 0.28f, -0.37f, 0.25f), body);
         }
 
-        void UpdateHeadsetStatus(AvatarPose? upload, double now)
+        void UpdateHeadsetStatus(AvatarPose? pose, double now)
         {
-            string pc = string.IsNullOrEmpty(choices.Pc) ? "Set the tracking PC address in settings." : tracking.Status;
-            string motion = choices.Solo ? "Mirror   " + skeleton.JointCount + " / 7 joints" :
-                upload.HasValue ? "L  " + TabletPanel.Lift(upload.Value, true) + "     R  " + TabletPanel.Lift(upload.Value, false) : "Waiting for a floor-level head pose";
+            string host = tracking.ConnectedHost;
+            if (!string.IsNullOrEmpty(host) && host != lastTrackingPc)
+                DemoChoices.LastTrackingPc = lastTrackingPc = host;
+            string pc = string.IsNullOrEmpty(host) ? tracking.Status : "SlimeVR  " + host + "\n" + tracking.Status;
+            string motion = choices.Solo && (!pose.HasValue || !pose.Value.Climb.Active) ? "Mirror   " + skeleton.JointCount + " / 7 joints" :
+                pose.HasValue ? TabletPanel.Motion(pose.Value) : "Waiting for a floor-level head pose";
             if (now < calibrationNoticeUntil) motion = "Calibrating. Keep both feet flat and still.";
             string roomStatus = "";
             if (!choices.Solo)
@@ -250,21 +290,26 @@ namespace Blacktheon.BodyTracking.Demo
                 roomStatus = occupied ? "Seat occupied. Select another seat." :
                     session.IsClientConnected ? "Tablet online  " + relay.Roster.Count + "/3 seats" : network;
             }
+            string cue = cableMission != null ? cableMission.Cue : "";
+            if (climber?.Feedback == LadderResult.Fell) cue = "Third step of the same kind. Back at the base.";
+            else if (climber?.OnRoof == true) cue = "On the roof. Use the stick to move.";
+            else if (climber?.Holding == true) cue = "Hold one grip. Reach or lift and lower the lower shoe.";
+            else if (climber != null && climber.NearbyRung > 0) cue = "Squeeze a side grip to hold rung " + climber.NearbyRung + ".";
             panel.Status(choices.Label + (sitting ? "    Sitting" : "    Standing") +
                 "\nA  Sit/stand    X  Calibrate    B  Settings\n" + motion + "\n" + pc + (choices.Solo ? "" : "\n" + roomStatus) +
-                (cableMission != null ? "\n" + cableMission.Cue : ""));
+                (cue.Length > 0 ? "\n" + cue : ""));
         }
 
         void OnApplicationPause(bool value)
         {
             paused = value;
-            if (paused) cableMission?.ResetApproach();
+            if (paused) { cableMission?.ResetApproach(); climber?.Cancel(rig); }
         }
 
         void OnApplicationFocus(bool value)
         {
             focused = value;
-            if (!focused) cableMission?.ResetApproach();
+            if (!focused) { cableMission?.ResetApproach(); climber?.Cancel(rig); }
         }
 
         void OnDestroy()

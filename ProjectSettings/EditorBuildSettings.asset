@@ -9,8 +9,8 @@ EditorBuildSettings:
     path: Assets/BodyTrackingDemo/Scenes/StepOverCable.unity
     guid: 3e9d639332491334c8ad74c11a855728
   - enabled: 1
-    path: Assets/BodyTrackingDemo/Scenes/Quest.unity
-    guid: f161376952eb590ba2dab2881e7fc2e9
+    path: Assets/BodyTrackingDemo/Scenes/Tablet.unity
+    guid: 32890e36eaa3542c91102dc1a2f4a9de
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: bfbc9ae63d14b7740936d98e00f5156d, type: 2}

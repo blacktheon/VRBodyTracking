@@ -11,7 +11,7 @@ namespace Blacktheon.BodyTracking.Demo.Tests
         {
             const string roleKey = "Blacktheon.SeatedDemo.role", modelKey = "Blacktheon.SeatedDemo.model";
             bool hadRole = PlayerPrefs.HasKey(roleKey), hadModel = PlayerPrefs.HasKey(modelKey);
-            bool hadPc = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.pc"), hadTablet = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.tablet");
+            bool hadPc = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.pcOverride"), hadTablet = PlayerPrefs.HasKey("Blacktheon.SeatedDemo.tablet");
             int oldRole = PlayerPrefs.GetInt(roleKey), oldModel = PlayerPrefs.GetInt(modelKey);
             try
             {
@@ -33,8 +33,34 @@ namespace Blacktheon.BodyTracking.Demo.Tests
             {
                 if (hadRole) PlayerPrefs.SetInt(roleKey, oldRole); else PlayerPrefs.DeleteKey(roleKey);
                 if (hadModel) PlayerPrefs.SetInt(modelKey, oldModel); else PlayerPrefs.DeleteKey(modelKey);
-                if (!hadPc) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.pc");
+                if (!hadPc) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.pcOverride");
                 if (!hadTablet) PlayerPrefs.DeleteKey("Blacktheon.SeatedDemo.tablet");
+                PlayerPrefs.Save();
+            }
+        }
+
+        [Test]
+        public void UpgradingUsesTheOldPcAsAnAutoDiscoveryHintAndKeepsAnExplicitOverrideSeparate()
+        {
+            const string hintKey = "Blacktheon.SeatedDemo.pc", overrideKey = "Blacktheon.SeatedDemo.pcOverride";
+            string oldHint = PlayerPrefs.GetString(hintKey), oldOverride = PlayerPrefs.GetString(overrideKey);
+            bool hadHint = PlayerPrefs.HasKey(hintKey), hadOverride = PlayerPrefs.HasKey(overrideKey);
+            try
+            {
+                PlayerPrefs.SetString(hintKey, "192.168.1.8");
+                PlayerPrefs.DeleteKey(overrideKey);
+                Assert.That(DemoChoices.Load().Pc, Is.Empty);
+                Assert.That(DemoChoices.LastTrackingPc, Is.EqualTo("192.168.1.8"));
+
+                PlayerPrefs.SetString(overrideKey, "192.168.1.20");
+                DemoChoices.LastTrackingPc = "192.168.1.14";
+                Assert.That(DemoChoices.Load().Pc, Is.EqualTo("192.168.1.20"));
+                Assert.That(DemoChoices.LastTrackingPc, Is.EqualTo("192.168.1.14"));
+            }
+            finally
+            {
+                if (hadHint) PlayerPrefs.SetString(hintKey, oldHint); else PlayerPrefs.DeleteKey(hintKey);
+                if (hadOverride) PlayerPrefs.SetString(overrideKey, oldOverride); else PlayerPrefs.DeleteKey(overrideKey);
                 PlayerPrefs.Save();
             }
         }
@@ -166,6 +192,11 @@ namespace Blacktheon.BodyTracking.Demo.Tests
                 Assert.That(rightFoot.position.y, Is.EqualTo(restAnkle.y).Within(0.001f));
                 Assert.That(Vector3.Dot((leftCalf.position - leftThigh.position).normalized,
                     (leftFoot.position - leftCalf.position).normalized), Is.LessThan(0.6f));
+
+                pose.LeftFoot = SeatedMotion.Foot(floor, body, true, 0, true);
+                soldier.Draw(pose);
+                Assert.That(leftFoot.position.y, Is.EqualTo(restAnkle.y).Within(0.001f), "the lifted boot returns to the floor");
+                Assert.That(rightFoot.position.y, Is.EqualTo(restAnkle.y).Within(0.001f));
             }
             finally { Object.DestroyImmediate(model); }
         }

@@ -15,12 +15,16 @@ namespace Blacktheon.BodyTracking.Demo
         internal bool Confirm { get; private set; }
         internal bool Calibrate { get; private set; }
         internal bool Back { get; private set; }
+        internal bool LeftGrip { get; private set; }
+        internal bool RightGrip { get; private set; }
         bool wasConfirm, wasCalibrate, wasBack, holdingStick;
 
         internal void Read()
         {
             var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
             var right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
+            LeftGrip = ReadGrip(left, XRController.leftHand, LeftGrip);
+            RightGrip = ReadGrip(right, XRController.rightHand, RightGrip);
             if (!left.TryGetFeatureValue(Usages.primary2DAxis, out var move))
                 move = XRController.leftHand?.TryGetChildControl<Vector2Control>("thumbstick")?.ReadValue() ?? Vector2.zero;
             if (!right.TryGetFeatureValue(Usages.primary2DAxis, out var turn))
@@ -61,6 +65,17 @@ namespace Blacktheon.BodyTracking.Demo
                     ? new Vector2Int(move.x > 0 ? 1 : -1, 0)
                     : new Vector2Int(0, move.y > 0 ? 1 : -1);
             }
+        }
+
+        static bool ReadGrip(UnityEngine.XR.InputDevice device, XRController controller, bool held)
+        {
+            if (device.TryGetFeatureValue(Usages.isTracked, out bool tracked) && !tracked) return false;
+            float threshold = held ? 0.35f : 0.60f;
+            if (device.TryGetFeatureValue(Usages.grip, out float pressure)) return pressure >= threshold;
+            if (device.TryGetFeatureValue(Usages.gripButton, out bool pressed)) return pressed;
+            var axis = controller?.TryGetChildControl<AxisControl>("grip");
+            if (axis != null) return axis.ReadValue() >= threshold;
+            return controller?.TryGetChildControl<ButtonControl>("gripPressed")?.isPressed ?? false;
         }
     }
 }

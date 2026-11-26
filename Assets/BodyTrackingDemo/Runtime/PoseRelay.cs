@@ -13,11 +13,28 @@ namespace Blacktheon.BodyTracking.Demo
         const string Upload = "Blacktheon.Seated.Pose.1";
         const string Snapshot = "Blacktheon.Seated.Room.1";
         const string Appearance = "Blacktheon.Seated.Soldier.1";
+        const string ClimbUpload = "Blacktheon.Seated.Climb.1";
+        const string ClimbRoom = "Blacktheon.Seated.Climbers.1";
+        const string World = "Blacktheon.Seated.World.1";
         const int PoseBytes = 2 + 5 * (3 + 4) * sizeof(float);
         const int EntryBytes = sizeof(ulong) + PoseBytes;
+        const int ClimbBytes = 5;
+        const byte RoofFlag = 0x80;
+        const int ClimbRoomBytes = 3 * (sizeof(ulong) + ClimbBytes);
+        const int WorldBytes = 2 * (3 + 4 + 3) * sizeof(float);
         readonly NetworkManager manager;
         readonly Dictionary<ulong, SoldierModel> models = new();
+        // A reliable first upload also advertises support, including for a headset still choosing a seat.
+        readonly Dictionary<ulong, (byte slot, ClimbSnapshot climb)> uploads = new();
+        readonly (ulong owner, ClimbSnapshot climb)[] roomClimbs = new (ulong, ClimbSnapshot)[3];
+        readonly (ulong owner, ClimbSnapshot climb)[] incomingClimbs = new (ulong, ClimbSnapshot)[3];
         SoldierModel? announcedModel;
+        ClimbSnapshot? announcedClimb;
+        byte announcedSlot;
+        bool newClimbPeer;
+        Transform vehicleRoot, ladderRoot;
+        int rungCount = byte.MaxValue;
+        (WorldTransform vehicle, WorldTransform ladder)? lastWorld;
         CustomMessagingManager messages;
         PoseRoster incoming = new();
         double nextSend;
@@ -33,17 +50,29 @@ namespace Blacktheon.BodyTracking.Demo
             manager.OnClientDisconnectCallback += Leave;
         }
 
+        internal void BindWorld(Transform vehicle, Transform ladder)
+        {
+            vehicleRoot = vehicle;
+            ladderRoot = ladder;
+            var layout = ladder != null ? ladder.GetComponentInParent<ClimbLadder>() : null;
+            rungCount = layout != null ? Mathf.Clamp(layout.RungCount, 0, byte.MaxValue) : byte.MaxValue;
+            if (!manager.IsServer) ApplyWorld();
+        }
+
         void StartServer()
         {
             messages = manager.CustomMessagingManager;
             messages.RegisterNamedMessageHandler(Upload, ReceivePose);
             messages.RegisterNamedMessageHandler(Appearance, ReceiveModel);
+            messages.RegisterNamedMessageHandler(ClimbUpload, ReceiveClimb);
         }
 
         void StartClient()
         {
             messages = manager.CustomMessagingManager;
             messages.RegisterNamedMessageHandler(Snapshot, ReceiveRoom);
+            messages.RegisterNamedMessageHandler(ClimbRoom, ReceiveClimbers);
+            messages.RegisterNamedMessageHandler(World, ReceiveWorld);
         }
 
         void Stop(bool _)
@@ -52,7 +81,13 @@ namespace Blacktheon.BodyTracking.Demo
             Roster.Clear();
             incoming.Clear();
             models.Clear();
+            uploads.Clear();
+            Array.Clear(roomClimbs, 0, roomClimbs.Length);
             announcedModel = null;
+            announcedClimb = null;
+            announcedSlot = 0;
+            newClimbPeer = false;
+            lastWorld = null;
             nextSend = 0;
         }
 
@@ -62,6 +97,7 @@ namespace Blacktheon.BodyTracking.Demo
             {
                 Roster.Remove(clientId);
                 models.Remove(clientId);
+                uploads.Remove(clientId);
             }
             else Roster.Clear();
         }
@@ -74,12 +110,23 @@ namespace Blacktheon.BodyTracking.Demo
             if (manager.IsServer)
             {
                 if (manager.ConnectedClientsIds.Count == 0) return;
-                // A choice announcement also tells the server that this headset reads model IDs.
-                if (models.Count < manager.ConnectedClientsIds.Count) SendRoom(false);
-                if (models.Count > 0) SendRoom(true);
+                if (uploads.Count != 0)
+                {
+                    SendClimbers();
+                    SendWorld();
+                    newClimbPeer = false;
+                }
+                foreach (ulong client in manager.ConnectedClientsIds) SendRoom(client);
             }
-            else if (manager.IsConnectedClient && local.HasValue && local.Value.IsValid)
+            else if (manager.IsConnectedClient)
             {
+                ApplyWorld();
+                if (!local.HasValue || !local.Value.IsValid)
+                {
+                    if (!local.HasValue || !announcedClimb.HasValue) SendClimb(announcedSlot, default);
+                    return;
+                }
+                SendClimb(local.Value.Slot, local.Value.Climb);
                 if (announcedModel != local.Value.Model)
                 {
                     using var choice = new FastBufferWriter(1, Allocator.Temp);
@@ -93,20 +140,25 @@ namespace Blacktheon.BodyTracking.Demo
             }
         }
 
-        void SendRoom(bool includeModels)
+        void SendRoom(ulong client)
         {
+            bool includeModels = models.ContainsKey(client);
+            bool allHeights = uploads.ContainsKey(client);
             using var writer = new FastBufferWriter(1 + 3 * (EntryBytes + 1), Allocator.Temp);
-            writer.WriteValueSafe((byte)Roster.Count);
+            int count = Roster.Count;
+            if (!allHeights)
+                for (int slot = 1; slot <= 3; slot++)
+                    if (Roster.TryGet(slot, out _, out var pose) && !pose.FitsLegacyHeight) count--;
+            writer.WriteValueSafe((byte)count);
             for (int slot = 1; slot <= 3; slot++)
             {
                 if (!Roster.TryGet(slot, out ulong owner, out var pose)) continue;
+                if (!allHeights && !pose.FitsLegacyHeight) continue;
                 writer.WriteValueSafe(owner);
                 WritePose(writer, pose);
                 if (includeModels) writer.WriteValueSafe((byte)pose.Model);
             }
-            foreach (ulong client in manager.ConnectedClientsIds)
-                if (models.ContainsKey(client) == includeModels)
-                    messages.SendNamedMessage(Snapshot, client, writer, NetworkDelivery.UnreliableSequenced);
+            messages.SendNamedMessage(Snapshot, client, writer, NetworkDelivery.UnreliableSequenced);
         }
 
         void ReceiveModel(ulong sender, FastBufferReader reader)
@@ -124,6 +176,8 @@ namespace Blacktheon.BodyTracking.Demo
             if (!manager.IsServer || !manager.ConnectedClients.ContainsKey(sender) || reader.Length - reader.Position != PoseBytes) return;
             var pose = ReadPose(reader);
             if (models.TryGetValue(sender, out var model)) pose.Model = model;
+            if (uploads.TryGetValue(sender, out var upload) && upload.slot == pose.Slot) pose.Climb = upload.climb;
+            else if (Roster.TryGet(pose.Slot, out ulong owner, out var previous) && sender == owner) pose.Climb = previous.Climb;
             Roster.Put(sender, pose, Time.unscaledTimeAsDouble);
         }
 
@@ -144,10 +198,179 @@ namespace Blacktheon.BodyTracking.Demo
                     reader.ReadValueSafe(out byte model);
                     pose.Model = (SoldierModel)model;
                 }
+                if (pose.Slot >= 1 && pose.Slot <= 3 && roomClimbs[pose.Slot - 1].owner == owner)
+                    pose.Climb = roomClimbs[pose.Slot - 1].climb;
                 if (!incoming.Put(owner, pose, Time.unscaledTimeAsDouble)) return;
             }
             if (incoming.Count != count) return;
             (Roster, incoming) = (incoming, Roster);
+        }
+
+        void SendClimb(byte slot, ClimbSnapshot climb)
+        {
+            if (!climb.IsValid(rungCount) || (announcedSlot == slot && announcedClimb.HasValue && announcedClimb.Value.Equals(climb))) return;
+            using var writer = new FastBufferWriter(1 + ClimbBytes, Allocator.Temp);
+            writer.WriteValueSafe(slot);
+            WriteClimb(writer, climb);
+            messages.SendNamedMessage(ClimbUpload, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+            announcedSlot = slot;
+            announcedClimb = climb;
+        }
+
+        void ReceiveClimb(ulong sender, FastBufferReader reader)
+        {
+            if (!manager.IsServer || !manager.ConnectedClients.ContainsKey(sender) || reader.Length - reader.Position != 1 + ClimbBytes) return;
+            reader.ReadValueSafe(out byte slot);
+            var climb = ReadClimb(reader);
+            if (slot > 3 || (slot == 0 && climb.Active) || !climb.IsValid(rungCount)) return;
+            if (!uploads.ContainsKey(sender)) newClimbPeer = true;
+            // A grip may precede its pose or the release of a seat. Only the matching owner's pose can use it.
+            uploads[sender] = (slot, climb);
+            Roster.SetClimb(slot, sender, climb);
+        }
+
+        void SendClimbers()
+        {
+            bool changed = false, any = false;
+            for (int i = 0; i < roomClimbs.Length; i++)
+            {
+                (ulong owner, ClimbSnapshot climb) entry = Roster.TryGet(i + 1, out ulong owner, out var pose) && pose.Climb.Active
+                    ? (owner, pose.Climb) : default;
+                any |= entry.climb.Active;
+                changed |= roomClimbs[i].owner != entry.owner || !roomClimbs[i].climb.Equals(entry.climb);
+                roomClimbs[i] = entry;
+            }
+            if (!changed && !(newClimbPeer && any)) return;
+            using var writer = new FastBufferWriter(ClimbRoomBytes, Allocator.Temp);
+            foreach (var entry in roomClimbs)
+            {
+                writer.WriteValueSafe(entry.owner);
+                WriteClimb(writer, entry.climb);
+            }
+            SendToClimbPeers(ClimbRoom, writer);
+        }
+
+        void ReceiveClimbers(ulong sender, FastBufferReader reader)
+        {
+            if (sender != NetworkManager.ServerClientId || reader.Length - reader.Position != ClimbRoomBytes) return;
+            for (int i = 0; i < incomingClimbs.Length; i++)
+            {
+                reader.ReadValueSafe(out ulong owner);
+                var climb = ReadClimb(reader);
+                if (!climb.IsValid(rungCount)) return;
+                incomingClimbs[i] = (owner, climb);
+            }
+            Array.Copy(incomingClimbs, roomClimbs, roomClimbs.Length);
+            for (int i = 0; i < roomClimbs.Length; i++)
+                if (Roster.TryGet(i + 1, out ulong owner, out _))
+                    Roster.SetClimb(i + 1, owner, roomClimbs[i].owner == owner ? roomClimbs[i].climb : default);
+        }
+
+        static void WriteClimb(FastBufferWriter writer, ClimbSnapshot climb)
+        {
+            writer.WriteValueSafe(climb.LeftHand);
+            writer.WriteValueSafe(climb.RightHand);
+            writer.WriteValueSafe(climb.LeftFoot);
+            writer.WriteValueSafe(climb.RightFoot);
+            writer.WriteValueSafe((byte)((byte)climb.Feedback | (climb.OnRoof ? RoofFlag : 0)));
+        }
+
+        static ClimbSnapshot ReadClimb(FastBufferReader reader)
+        {
+            var climb = new ClimbSnapshot();
+            reader.ReadValueSafe(out climb.LeftHand);
+            reader.ReadValueSafe(out climb.RightHand);
+            reader.ReadValueSafe(out climb.LeftFoot);
+            reader.ReadValueSafe(out climb.RightFoot);
+            reader.ReadValueSafe(out byte flags);
+            climb.Feedback = (ClimbFeedback)(flags & ~RoofFlag);
+            climb.OnRoof = (flags & RoofFlag) != 0;
+            return climb;
+        }
+
+        internal readonly struct WorldTransform
+        {
+            readonly Pose pose;
+            readonly Vector3 scale;
+
+            internal WorldTransform(Transform root) : this(new Pose(root.position, root.rotation), root.localScale) { }
+
+            internal WorldTransform(Pose pose, Vector3 scale)
+            {
+                this.pose = pose;
+                this.scale = scale;
+            }
+
+            internal bool IsValid => Mathf.Abs(pose.position.x) <= 7 && Mathf.Abs(pose.position.y) <= 7 && Mathf.Abs(pose.position.z) <= 7 &&
+                AvatarPose.ValidRotation(pose.rotation) && ValidScale(scale.x) && ValidScale(scale.y) && ValidScale(scale.z);
+
+            static bool ValidScale(float axis) => Mathf.Abs(axis) >= 0.001f && Mathf.Abs(axis) <= 32;
+            internal bool Matches(WorldTransform other) => pose.position == other.pose.position && scale == other.scale &&
+                Mathf.Abs(Quaternion.Dot(pose.rotation, other.pose.rotation)) > 0.999999f;
+
+            internal void Apply(Transform root)
+            {
+                root.localScale = scale;
+                root.SetPositionAndRotation(pose.position, pose.rotation);
+            }
+
+            internal void Write(FastBufferWriter writer)
+            {
+                WriteJoint(writer, pose);
+                writer.WriteValueSafe(scale);
+            }
+
+            internal static WorldTransform Read(FastBufferReader reader)
+            {
+                var pose = ReadJoint(reader);
+                reader.ReadValueSafe(out Vector3 scale);
+                return new WorldTransform(pose, scale);
+            }
+        }
+
+        void SendWorld()
+        {
+            if (vehicleRoot == null || ladderRoot == null) return;
+            var vehicle = new WorldTransform(vehicleRoot);
+            var ladder = new WorldTransform(ladderRoot);
+            if (vehicle.IsValid && ladder.IsValid)
+            {
+                if (!newClimbPeer && lastWorld.HasValue && vehicle.Matches(lastWorld.Value.vehicle) && ladder.Matches(lastWorld.Value.ladder)) return;
+                lastWorld = (vehicle, ladder);
+            }
+            else
+            {
+                if (!newClimbPeer || !lastWorld.HasValue) return;
+                (vehicle, ladder) = lastWorld.Value;
+            }
+            using var writer = new FastBufferWriter(WorldBytes, Allocator.Temp);
+            vehicle.Write(writer);
+            ladder.Write(writer);
+            SendToClimbPeers(World, writer);
+        }
+
+        void ReceiveWorld(ulong sender, FastBufferReader reader)
+        {
+            if (sender != NetworkManager.ServerClientId || reader.Length - reader.Position != WorldBytes) return;
+            var vehicle = WorldTransform.Read(reader);
+            var ladder = WorldTransform.Read(reader);
+            if (!vehicle.IsValid || !ladder.IsValid) return;
+            lastWorld = (vehicle, ladder);
+            ApplyWorld();
+        }
+
+        void ApplyWorld()
+        {
+            if (!lastWorld.HasValue || vehicleRoot == null || ladderRoot == null) return;
+            var world = lastWorld.Value;
+            if (!world.vehicle.Matches(new WorldTransform(vehicleRoot))) world.vehicle.Apply(vehicleRoot);
+            if (!world.ladder.Matches(new WorldTransform(ladderRoot))) world.ladder.Apply(ladderRoot);
+        }
+
+        void SendToClimbPeers(string name, FastBufferWriter writer)
+        {
+            foreach (ulong client in uploads.Keys)
+                messages.SendNamedMessage(name, client, writer, NetworkDelivery.ReliableSequenced);
         }
 
         static void WritePose(FastBufferWriter writer, AvatarPose pose)
@@ -199,8 +422,14 @@ namespace Blacktheon.BodyTracking.Demo
                 {
                     messages.UnregisterNamedMessageHandler(Upload);
                     messages.UnregisterNamedMessageHandler(Appearance);
+                    messages.UnregisterNamedMessageHandler(ClimbUpload);
                 }
-                if (manager.IsClient) messages.UnregisterNamedMessageHandler(Snapshot);
+                if (manager.IsClient)
+                {
+                    messages.UnregisterNamedMessageHandler(Snapshot);
+                    messages.UnregisterNamedMessageHandler(ClimbRoom);
+                    messages.UnregisterNamedMessageHandler(World);
+                }
             }
             Stop(false);
         }
